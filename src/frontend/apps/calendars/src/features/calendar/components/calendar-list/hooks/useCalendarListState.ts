@@ -76,8 +76,10 @@ export const useCalendarListState = ({
   }, []);
 
   const handleSaveCalendar = useCallback(
-    async (name: string, color: string) => {
+    async (name: string, color: string, includeInAvailability?: boolean) => {
       if (modalState.mode === "create") {
+        // New calendars default to opaque (included in availability).
+        // includeInAvailability is only editable after creation.
         const result = await createCalendar({
           displayName: name,
           color,
@@ -87,10 +89,28 @@ export const useCalendarListState = ({
           throw new Error(result.error);
         }
       } else if (modalState.calendar) {
-        const result = await updateCalendar(modalState.calendar.url, {
-          displayName: name,
-          color,
-        });
+        // Only send props that actually changed: PROPPATCHing every
+        // field on every save means a sharee touching just the color
+        // also rewrites schedule-calendar-transp on the per-instance
+        // row, which has its own bug surface.
+        const current = modalState.calendar;
+        const params: Parameters<typeof updateCalendar>[1] = {};
+        if (name !== current.displayName) {
+          params.displayName = name;
+        }
+        if (color !== current.color) {
+          params.color = color;
+        }
+        if (
+          includeInAvailability !== undefined
+          && includeInAvailability !== current.includeInAvailability
+        ) {
+          params.includeInAvailability = includeInAvailability;
+        }
+        if (Object.keys(params).length === 0) {
+          return;
+        }
+        const result = await updateCalendar(modalState.calendar.url, params);
         if (!result.success) {
           throw new Error(result.error);
         }

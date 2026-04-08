@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { IcsEvent, IcsOrganizer } from "ts-ics";
 import {
@@ -27,6 +27,7 @@ import { SectionPills } from "./event-modal-sections/SectionPills";
 import { useResourcePrincipals } from "@/features/resources/api/useResourcePrincipals";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useConfig } from "@/features/config/ConfigProvider";
+import { FeatureFlag, useFeatureFlag } from "@/hooks/useFeatureFlag";
 import type {
   EventModalProps,
   RecurringDeleteOption,
@@ -55,11 +56,20 @@ export const EventModal = ({
 
   const { resources: availableResources } = useResourcePrincipals();
 
+  // For mailbox calendars, use the mailbox email as ORGANIZER. The
+  // value comes from the parsed CS:invite payload on the calendar
+  // object — no extra context lookup, no hydration race.
+  const mailboxEmail = calendarUrl
+    ? calendars.find((c) => c.url === calendarUrl)?.mailboxEmail
+    : undefined;
+
   const organizer: IcsOrganizer | undefined =
     event?.organizer ||
-    (user?.email
-      ? { email: user.email, name: user.full_name || user.email.split("@")[0] }
-      : undefined);
+    (mailboxEmail
+      ? { email: mailboxEmail, name: mailboxEmail.split("@")[0] }
+      : user?.email
+        ? { email: user.email, name: user.full_name || user.email.split("@")[0] }
+        : undefined);
 
   const form = useEventForm({
     event,
@@ -69,6 +79,21 @@ export const EventModal = ({
     mode,
     availableResources,
   });
+
+  // Defensive: if the form's selected calendar URL is empty or doesn't
+  // match any entry in the dropdown's options (stale state, race
+  // condition between calendar creation and modal open, URL trailing-
+  // slash mismatch…), auto-snap to the first available calendar so the
+  // user always sees something selected and Save is enabled.
+  useEffect(() => {
+    if (!isOpen || calendars.length === 0) return;
+    const isValid = calendars.some(
+      (cal) => cal.url === form.selectedCalendarUrl,
+    );
+    if (!isValid) {
+      form.setSelectedCalendarUrl(calendars[0].url);
+    }
+  }, [isOpen, calendars, form]);
 
   // Check if current user is invited
   const currentUserAttendee = event?.attendees?.find(
@@ -163,6 +188,11 @@ export const EventModal = ({
 
   const { config } = useConfig();
   const meetBaseUrl = config?.FRONTEND_MEET_BASE_URL;
+  // Gate the "Find a time" (FreeBusySection) pill behind a feature
+  // flag. The section issues VFREEBUSY queries against the CalDAV
+  // scheduling outbox; deployments without that capability can hide
+  // the pill entirely by setting FEATURE_EVENT_SCHEDULING=false.
+  const isSchedulingEnabled = useFeatureFlag(FeatureFlag.EVENT_SCHEDULING);
 
   const pills = useMemo(
     () => [
@@ -204,13 +234,17 @@ export const EventModal = ({
             },
           ]
         : []),
-      {
-        id: "scheduling" as const,
-        icon: "event_available",
-        label: t("scheduling.findATime"),
-      },
+      ...(isSchedulingEnabled
+        ? [
+            {
+              id: "scheduling" as const,
+              icon: "event_available",
+              label: t("scheduling.findATime"),
+            },
+          ]
+        : []),
     ],
-    [t, meetBaseUrl, availableResources.length],
+    [t, meetBaseUrl, availableResources.length, isSchedulingEnabled],
   );
 
   return (
@@ -339,7 +373,7 @@ export const EventModal = ({
               alwaysOpen
             />
           )}
-          {form.isSectionExpanded("scheduling") && (
+          {isSchedulingEnabled && form.isSectionExpanded("scheduling") && (
             <FreeBusySection
               attendees={form.attendees}
               resourceEmails={form.resources

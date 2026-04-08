@@ -1,11 +1,13 @@
 /**
  * CalendarList component - List of calendars with visibility toggles.
+ * Shows onboarding modal when user has no calendars.
  */
 
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useCalendarContext } from "../../contexts";
+import { setupCalendar } from "@/features/mailbox/api";
 
 import { CalendarModal } from "./CalendarModal";
 import { CalendarShareModal } from "./CalendarShareModal";
@@ -22,12 +24,15 @@ export const CalendarList = () => {
   const {
     ownedCalendars,
     sharedCalendars,
+    davCalendars,
     visibleCalendarUrls,
     toggleCalendarVisibility,
     createCalendar,
     updateCalendar,
     deleteCalendar,
+    refreshCalendars,
     calendarRef,
+    isLoading: isCalendarLoading,
   } = useCalendarContext();
 
   const {
@@ -55,6 +60,22 @@ export const CalendarList = () => {
     updateCalendar,
     deleteCalendar,
   });
+
+  // Onboarding: show modal when user has no calendars at all
+  const showOnboarding = !isCalendarLoading && davCalendars.length === 0;
+
+  // Wrap save to handle mailbox calendar creation
+  const handleSaveWithMailbox = useCallback(
+    async (name: string, color: string, mailboxEmail?: string, includeInAvailability?: boolean) => {
+      if (mailboxEmail) {
+        await setupCalendar(name, mailboxEmail, color);
+        await refreshCalendars();
+      } else {
+        await handleSaveCalendar(name, color, includeInAvailability);
+      }
+    },
+    [handleSaveCalendar, refreshCalendars],
+  );
 
   // Subscription modal state
   const [subscriptionModal, setSubscriptionModal] = useState<{
@@ -121,20 +142,20 @@ export const CalendarList = () => {
               <span
                 className={`material-icons calendar-list__toggle-icon ${
                   isMyCalendarsExpanded
-                    ? 'calendar-list__toggle-icon--expanded'
-                    : ''
+                    ? "calendar-list__toggle-icon--expanded"
+                    : ""
                 }`}
               >
                 expand_more
               </span>
               <span className="calendar-list__section-title">
-                {t('calendar.list.myCalendars')}
+                {t("calendar.list.myCalendars")}
               </span>
             </button>
             <button
               className="calendar-list__add-btn"
               onClick={handleOpenCreateModal}
-              title={t('calendar.createCalendar.title')}
+              title={t("calendar.createCalendar.title")}
             >
               <span className="material-icons">add</span>
             </button>
@@ -147,6 +168,7 @@ export const CalendarList = () => {
                   calendar={calendar}
                   isVisible={visibleCalendarUrls.has(calendar.url)}
                   isMenuOpen={openMenuUrl === calendar.url}
+                  mailboxEmail={calendar.mailboxEmail}
                   onToggleVisibility={toggleCalendarVisibility}
                   onMenuToggle={handleMenuToggle}
                   onEdit={handleOpenEditModal}
@@ -172,14 +194,14 @@ export const CalendarList = () => {
                 <span
                   className={`material-icons calendar-list__toggle-icon ${
                     isSharedCalendarsExpanded
-                      ? 'calendar-list__toggle-icon--expanded'
-                      : ''
+                      ? "calendar-list__toggle-icon--expanded"
+                      : ""
                   }`}
                 >
                   expand_more
                 </span>
                 <span className="calendar-list__section-title">
-                  {t('calendar.list.sharedCalendars')}
+                  {t("calendar.list.sharedCalendars")}
                 </span>
               </button>
             </div>
@@ -191,6 +213,7 @@ export const CalendarList = () => {
                     calendar={calendar}
                     isVisible={visibleCalendarUrls.has(calendar.url)}
                     isMenuOpen={openMenuUrl === calendar.url}
+                    mailboxEmail={calendar.mailboxEmail}
                     onToggleVisibility={toggleCalendarVisibility}
                     onMenuToggle={handleMenuToggle}
                     onEdit={handleOpenEditModal}
@@ -206,12 +229,22 @@ export const CalendarList = () => {
         )}
       </div>
 
+      {/* Onboarding modal: shown when user has no calendars */}
+      <CalendarModal
+        isOpen={showOnboarding}
+        mode="create"
+        onClose={() => {}}
+        onSave={handleSaveWithMailbox}
+        isOnboarding
+      />
+
+      {/* Normal create/edit modal */}
       <CalendarModal
         isOpen={modalState.isOpen}
         mode={modalState.mode}
         calendar={modalState.calendar}
         onClose={handleCloseModal}
-        onSave={handleSaveCalendar}
+        onSave={handleSaveWithMailbox}
       />
 
       <CalendarShareModal
@@ -222,7 +255,7 @@ export const CalendarList = () => {
 
       <DeleteConfirmModal
         isOpen={deleteState.isOpen}
-        calendarName={deleteState.calendar?.displayName || ''}
+        calendarName={deleteState.calendar?.displayName || ""}
         onConfirm={handleConfirmDelete}
         onCancel={handleCloseDeleteModal}
         isLoading={deleteState.isLoading}

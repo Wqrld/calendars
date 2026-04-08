@@ -18,13 +18,11 @@ import {
 } from 'ts-ics'
 import {
   createAccount,
-  fetchCalendars as davFetchCalendars,
   fetchCalendarObjects as davFetchCalendarObjects,
   createCalendarObject as davCreateCalendarObject,
   updateCalendarObject as davUpdateCalendarObject,
   deleteCalendarObject as davDeleteCalendarObject,
   makeCalendar as davMakeCalendar,
-  propfind,
   DAVNamespaceShort,
   type DAVCalendarObject,
   davRequest,
@@ -65,14 +63,18 @@ import {
   executeDavRequest,
   escapeXml,
   CALENDAR_PROPS,
+  propfindLs,
   parseCalendarComponents,
   parseSharePrivilege,
-  parseShareStatus,
+  parseInviteSharees,
+  parseInviteOrganizerEmail,
   getCalendarUrlFromEventUrl,
   withErrorHandling,
   type ShareeXmlParams,
+  type CalendarProps,
 } from './caldav-helpers'
 import { getIcalTimezoneBlock } from './helpers/ical-timezones'
+import { buildFreeBusyRequestIcs } from './helpers/freebusy-builder'
 
 export class CalDavService {
   private _account: CalDavAccount | null = null
@@ -135,31 +137,24 @@ export class CalDavService {
     }
 
     return withErrorHandling(async () => {
-      const davCalendars = await davFetchCalendars({
-        account: {
-          serverUrl: this._account!.serverUrl,
-          rootUrl: this._account!.rootUrl,
-          principalUrl: this._account!.principalUrl,
-          homeUrl: this._account!.homeUrl,
-          accountType: 'caldav',
-        },
+      const responses = await propfindLs({
+        url: this._account!.homeUrl!,
+        props: CALENDAR_PROPS,
+        depth: '1',
         headers: this._account!.headers,
         fetchOptions: this._account!.fetchOptions,
       })
 
-      const calendars: CalDavCalendar[] = davCalendars.map((dav) => ({
-        url: dav.url,
-        displayName: typeof dav.displayName === 'string' ? dav.displayName : '',
-        description: typeof dav.description === 'string' ? dav.description : undefined,
-        color: dav.calendarColor,
-        ctag: dav.ctag,
-        syncToken: dav.syncToken,
-        timezone: typeof dav.timezone === 'string' ? dav.timezone : undefined,
-        components: dav.components,
-        resourcetype: dav.resourcetype ? Object.keys(dav.resourcetype) : undefined,
-        headers: this._account!.headers,
-        fetchOptions: this._account!.fetchOptions,
-      }))
+      const calendars: CalDavCalendar[] = responses
+        .filter((r) =>
+          Object.keys(
+            (r.props?.resourcetype ?? {}) as Record<string, unknown>,
+          ).includes('calendar'),
+        )
+        .map((rs) => this.parseCalendarPropfindResponse(
+          new URL(rs.href ?? '', this._account!.rootUrl ?? '').href,
+          rs.props,
+        ))
 
       this._calendars.clear()
       calendars.forEach((cal) => this._calendars.set(cal.url, cal))
@@ -168,11 +163,71 @@ export class CalDavService {
     }, 'Failed to fetch calendars')
   }
 
+  /** Build a CalDavCalendar from a tsdav-parsed PROPFIND props object. */
+  private parseCalendarPropfindResponse(
+    url: string,
+    props: Record<string, unknown> | undefined,
+  ): CalDavCalendar {
+    // schedule-calendar-transp (RFC 6638): "transparent" means the
+    // calendar does NOT count for freebusy.
+    const rawTransp = props?.scheduleCalendarTransp
+      ?? (props as Record<string, unknown> | undefined)?.['schedule-calendar-transp']
+    const isTransparent = rawTransp != null && (
+      typeof rawTransp === 'string'
+        ? rawTransp.toLowerCase().includes('transparent')
+        : typeof rawTransp === 'object' && rawTransp !== null && 'transparent' in rawTransp
+    )
+
+    // LS:calendar-owner-type: "MAILBOX" for mailbox-owned shared calendars.
+    const rawOwnerType = (props as Record<string, unknown> | undefined)?.calendarOwnerType
+    const ownerType = typeof rawOwnerType === 'string' ? rawOwnerType : undefined
+
+    // CS:invite is requested as part of CALENDAR_PROPS so the mailbox
+    // email and the sharee list both come back with the standard
+    // calendar fetch — no second PROPFIND, no dependency on
+    // useMailboxSync hydration.
+    const rawInvite = (props as Record<string, unknown> | undefined)?.invite
+    const rawAccessMap =
+      (props as Record<string, unknown> | undefined)?.shareAccessMap
+      ?? (props as Record<string, unknown> | undefined)?.['share-access-map']
+    const sharees = parseInviteSharees(rawInvite, rawAccessMap)
+    const mailboxEmail =
+      ownerType === 'MAILBOX' ? parseInviteOrganizerEmail(rawInvite) : undefined
+
+    const displayname = (props as Record<string, unknown> | undefined)?.displayname
+    const displayName = typeof displayname === 'string'
+      ? displayname
+      : (displayname as { _cdata?: string } | undefined)?._cdata ?? ''
+
+    return {
+      url,
+      displayName,
+      description: (props as Record<string, string | undefined> | undefined)?.calendarDescription,
+      color: (props as Record<string, string | undefined> | undefined)?.calendarColor,
+      includeInAvailability: !isTransparent,
+      ownerType,
+      mailboxEmail,
+      sharees,
+      ctag: (props as Record<string, string | undefined> | undefined)?.getctag,
+      syncToken: (props as Record<string, string | undefined> | undefined)?.syncToken,
+      timezone: (props as Record<string, string | undefined> | undefined)?.calendarTimezone,
+      components: parseCalendarComponents(
+        (props as Record<string, unknown> | undefined)?.supportedCalendarComponentSet,
+      ),
+      resourcetype: props?.resourcetype
+        ? Object.keys(props.resourcetype as Record<string, unknown>)
+        : undefined,
+      headers: this._account?.headers,
+      fetchOptions: this._account?.fetchOptions,
+    }
+  }
+
   async fetchCalendar(calendarUrl: string): Promise<CalDavResponse<CalDavCalendar>> {
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url: calendarUrl,
         props: CALENDAR_PROPS,
+        depth: '0',
         headers: this._account?.headers,
         fetchOptions: this._account?.fetchOptions,
       })
@@ -182,19 +237,7 @@ export class CalDavService {
         throw new Error(`Calendar not found: ${rs.status}`)
       }
 
-      const calendar: CalDavCalendar = {
-        url: calendarUrl,
-        displayName: rs.props?.displayname?._cdata ?? rs.props?.displayname ?? '',
-        description: rs.props?.calendarDescription,
-        color: rs.props?.calendarColor,
-        ctag: rs.props?.getctag,
-        syncToken: rs.props?.syncToken,
-        timezone: rs.props?.calendarTimezone,
-        components: parseCalendarComponents(rs.props?.supportedCalendarComponentSet),
-        resourcetype: rs.props?.resourcetype ? Object.keys(rs.props.resourcetype) : undefined,
-        headers: this._account?.headers,
-        fetchOptions: this._account?.fetchOptions,
-      }
+      const calendar = this.parseCalendarPropfindResponse(calendarUrl, rs.props)
 
       this._calendars.set(calendar.url, calendar)
       return calendar
@@ -254,11 +297,20 @@ export class CalDavService {
     calendarUrl: string,
     params: CalDavCalendarUpdate
   ): Promise<CalDavResponse<CalDavCalendar>> {
-    if (!params.displayName && !params.description && !params.color) {
+    const hasProps = params.displayName !== undefined
+      || params.description !== undefined
+      || params.color !== undefined
+      || params.timezone !== undefined
+      || params.includeInAvailability !== undefined
+    if (!hasProps) {
       return { success: false, error: 'No properties to update' }
     }
 
-    const body = buildProppatchXml(params)
+    const proppatchParams: CalendarProps = { ...params }
+    if (params.includeInAvailability !== undefined) {
+      proppatchParams.scheduleTransp = params.includeInAvailability ? 'opaque' : 'transparent'
+    }
+    const body = buildProppatchXml(proppatchParams)
 
     const result = await executeDavRequest({
       url: calendarUrl,
@@ -1078,7 +1130,6 @@ export class CalDavService {
       href: s.href,
       displayName: s.displayName,
       privilege: s.privilege,
-      summary: params.summary,
     }))
 
     const body = buildShareRequestXml(shareeParams)
@@ -1122,7 +1173,7 @@ export class CalDavService {
     }
 
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url: this._account!.homeUrl!,
         props: { [`${DAVNamespaceShort.CALENDAR_SERVER}:notification-URL`]: {} },
         headers: this._account!.headers,
@@ -1135,7 +1186,7 @@ export class CalDavService {
         return []
       }
 
-      const notificationsResponse = await propfind({
+      const notificationsResponse = await propfindLs({
         url: notificationUrl,
         props: { [`${DAVNamespaceShort.CALENDAR_SERVER}:notification`]: {} },
         headers: this._account!.headers,
@@ -1206,29 +1257,19 @@ export class CalDavService {
     return { success: true }
   }
 
+  /**
+   * Re-fetch the calendar and return its sharees. ``CS:invite`` is now
+   * part of the standard calendar PROPFIND, so this is a thin wrapper
+   * over ``fetchCalendar`` — kept as a public method to preserve the
+   * existing API surface and to give callers a single round-trip way
+   * to refresh the share list after an invite/update/delete.
+   */
   async getCalendarSharees(calendarUrl: string): Promise<CalDavResponse<CalDavSharee[]>> {
-    return withErrorHandling(async () => {
-      const response = await propfind({
-        url: calendarUrl,
-        props: { [`${DAVNamespaceShort.CALENDAR_SERVER}:invite`]: {} },
-        headers: this._account?.headers,
-        fetchOptions: this._account?.fetchOptions,
-        depth: '0',
-      })
-
-      const invite = response[0]?.props?.invite
-      if (!invite?.user) {
-        return []
-      }
-
-      const users = Array.isArray(invite.user) ? invite.user : [invite.user]
-      return users.map((user: Record<string, unknown>) => ({
-        href: (user.href as string) || '',
-        displayName: user['common-name'] as string | undefined,
-        privilege: parseSharePrivilege(user.access, user.summary as string | undefined),
-        status: parseShareStatus(user['invite-accepted'], user['invite-noresponse']),
-      }))
-    }, 'Failed to get sharees')
+    const result = await this.fetchCalendar(calendarUrl)
+    if (!result.success || !result.data) {
+      return { success: false, error: result.error }
+    }
+    return { success: true, data: result.data.sharees ?? [] }
   }
 
   // ============================================================================
@@ -1366,28 +1407,7 @@ export class CalDavService {
         throw new Error('Scheduling outbox not found')
       }
 
-      const startStr =
-        typeof request.timeRange.start === 'string'
-          ? request.timeRange.start
-          : request.timeRange.start.toISOString()
-      const endStr =
-        typeof request.timeRange.end === 'string'
-          ? request.timeRange.end
-          : request.timeRange.end.toISOString()
-
-      const attendeeLines = request.attendees.map((email) => `ATTENDEE:mailto:${email}`).join('\n')
-
-      const fbRequest = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//CalDavService//NONSGML v1.0//EN
-METHOD:REQUEST
-BEGIN:VFREEBUSY
-DTSTART:${startStr.replace(/[-:]/g, '').split('.')[0]}Z
-DTEND:${endStr.replace(/[-:]/g, '').split('.')[0]}Z
-${request.organizer ? `ORGANIZER:mailto:${request.organizer.email}` : ''}
-${attendeeLines}
-END:VFREEBUSY
-END:VCALENDAR`
+      const fbRequest = buildFreeBusyRequestIcs(request)
 
       // Construct full URL - outboxUrl from PROPFIND is an absolute path (e.g. /caldav/calendars/...)
       // so we only need to prepend the origin, not the full serverUrl (which already has /caldav/)
@@ -1430,7 +1450,7 @@ END:VCALENDAR`
     }
 
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url: this._account!.homeUrl!,
         props: {
           [`${DAVNamespaceShort.CALDAV}:calendar-availability`]: {},
@@ -1523,7 +1543,7 @@ END:VCALENDAR`
 
   async getCalendarAcl(calendarUrl: string): Promise<CalDavResponse<CalendarAcl>> {
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url: calendarUrl,
         props: {
           [`${DAVNamespaceShort.DAV}:acl`]: {},
@@ -1558,7 +1578,7 @@ END:VCALENDAR`
     }
 
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url,
         props: {
           [`${DAVNamespaceShort.DAV}:displayname`]: {},
@@ -1648,7 +1668,7 @@ END:VCALENDAR`
     if (!this._account?.principalUrl) return null
 
     try {
-      const response = await propfind({
+      const response = await propfindLs({
         url: this._account.principalUrl,
         props: { [`${DAVNamespaceShort.CALDAV}:schedule-outbox-URL`]: {} },
         headers: this._account.headers,
@@ -1679,7 +1699,7 @@ END:VCALENDAR`
     }
 
     return withErrorHandling(async () => {
-      const response = await propfind({
+      const response = await propfindLs({
         url: this._account!.principalUrl!,
         props: {
           [`${DAVNamespaceShort.CALDAV}:schedule-outbox-URL`]: {},

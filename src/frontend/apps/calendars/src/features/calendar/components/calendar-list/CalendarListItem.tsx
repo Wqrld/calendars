@@ -16,6 +16,7 @@ export const CalendarListItem = ({
   calendar,
   isVisible,
   isMenuOpen,
+  mailboxEmail,
   onToggleVisibility,
   onMenuToggle,
   onEdit,
@@ -27,11 +28,17 @@ export const CalendarListItem = ({
 }: CalendarListItemProps) => {
   const { t } = useTranslation();
 
+  const calendarColor = typeof calendar.color === "string" ? calendar.color : "#3788d8";
+
   return (
-    <div className="calendar-list__item">
+    <div
+      className={`calendar-list__item ${
+        isMenuOpen ? "calendar-list__item--menu-open" : ""
+      }`}
+    >
       <div
         className="calendar-list__item-checkbox"
-        style={{ "--calendar-color": calendar.color } as React.CSSProperties}
+        style={{ "--calendar-color": calendarColor } as React.CSSProperties}
       >
         <Checkbox
           checked={isVisible}
@@ -40,12 +47,23 @@ export const CalendarListItem = ({
           aria-label={`${t("calendar.list.showCalendar")} ${calendar.displayName || ""}`}
         />
       </div>
-      <span
-        className="calendar-list__name"
-        title={calendar.displayName || undefined}
-      >
-        {calendar.displayName || "Sans nom"}
-      </span>
+      <div className="calendar-list__name-wrapper">
+        <span
+          className="calendar-list__name"
+          title={calendar.displayName || undefined}
+        >
+          {calendar.displayName || t("calendar.list.unnamed")}
+        </span>
+        {mailboxEmail && (
+          <span
+            className="material-icons calendar-list__mailbox-icon"
+            title={t("calendar.list.mailboxCalendar", { email: mailboxEmail })}
+            aria-label={t("calendar.list.mailboxCalendar", { email: mailboxEmail })}
+          >
+            mail
+          </span>
+        )}
+      </div>
       <div className="calendar-list__item-actions">
         <CalendarItemMenu
           isOpen={isMenuOpen}

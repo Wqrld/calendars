@@ -19,7 +19,8 @@ from core import factories
 from core.entitlements import EntitlementsUnavailableError
 from core.entitlements.factory import get_entitlements_backend
 from core.services.caldav_service import (
-    CALDAV_PATH_PATTERN,
+    CALDAV_RESOURCE_PATH_PATTERN,
+    CALDAV_USER_PATH_PATTERN,
     normalize_caldav_path,
     verify_caldav_access,
 )
@@ -33,21 +34,61 @@ class TestVerifyCaldavAccessResourcePaths:
     """Tests for verify_caldav_access() with resource calendar paths."""
 
     def _make_user(self, email="alice@example.com", org_id=None):
-        """Create a mock user object."""
-        user = mock.Mock()
+        """Create a mock user object.
+
+        Uses spec_set so attributes accessed by build_base_headers
+        (organization.effective_sharing_level) return concrete values
+        instead of auto-generated Mock instances that the requests
+        library would reject as invalid header values.
+        """
+        user = mock.Mock(spec=["email", "organization_id", "organization"])
         user.email = email
         user.organization_id = org_id
+        user.organization = mock.Mock(spec=["effective_sharing_level"])
+        user.organization.effective_sharing_level = "freebusy"
         return user
 
-    def test_resource_path_allowed_when_user_has_org(self):
-        """Users with an organization can access resource calendars.
-
-        Fine-grained org-to-resource authorization is enforced by SabreDAV
-        via the X-CalDAV-Organization header, not here.
-        """
+    @responses.activate
+    def test_resource_path_allowed_when_resource_in_same_org(self):
+        """Users can access resource calendars in their own org."""
+        caldav_url = settings.CALDAV_URL
+        responses.add(
+            responses.GET,
+            f"{caldav_url}/caldav/internal-api/resources/abc-123",
+            json={"resource_id": "abc-123", "org_id": "some-org-uuid"},
+            status=200,
+        )
         user = self._make_user(org_id="some-org-uuid")
         path = "/calendars/resources/abc-123/default/"
         assert verify_caldav_access(user, path) is True
+
+    @responses.activate
+    def test_resource_path_blocked_when_resource_in_different_org(self):
+        """Users cannot access resource calendars in another org."""
+        caldav_url = settings.CALDAV_URL
+        responses.add(
+            responses.GET,
+            f"{caldav_url}/caldav/internal-api/resources/abc-123",
+            json={"resource_id": "abc-123", "org_id": "other-org-uuid"},
+            status=200,
+        )
+        user = self._make_user(org_id="some-org-uuid")
+        path = "/calendars/resources/abc-123/default/"
+        assert verify_caldav_access(user, path) is False
+
+    @responses.activate
+    def test_resource_path_blocked_when_resource_not_found(self):
+        """Nonexistent resources are blocked (fail-closed)."""
+        caldav_url = settings.CALDAV_URL
+        responses.add(
+            responses.GET,
+            f"{caldav_url}/caldav/internal-api/resources/nonexistent",
+            json={"error": "Resource not found"},
+            status=404,
+        )
+        user = self._make_user(org_id="some-org-uuid")
+        path = "/calendars/resources/nonexistent/default/"
+        assert verify_caldav_access(user, path) is False
 
     def test_user_path_allowed_for_own_email(self):
         """Users can access their own calendar paths."""
@@ -75,10 +116,36 @@ class TestVerifyCaldavAccessResourcePaths:
         assert verify_caldav_access(user, path) is False
 
     def test_resource_path_pattern_matches(self):
-        """The CALDAV_PATH_PATTERN regex matches resource paths."""
-        assert CALDAV_PATH_PATTERN.match("/calendars/resources/abc-123/default/")
-        assert CALDAV_PATH_PATTERN.match(
+        """The resource pattern matches UUID-shaped resource paths."""
+        assert CALDAV_RESOURCE_PATH_PATTERN.match(
+            "/calendars/resources/abc-123/default/"
+        )
+        assert CALDAV_RESOURCE_PATH_PATTERN.match(
             "/calendars/resources/a1b2c3d4-e5f6-7890-abcd-ef1234567890/default/"
+        )
+        # Resource segment must NOT accept percent-encoded payloads —
+        # the value is interpolated into an internal-api URL and any
+        # decoded ``..`` would risk hitting a different route after
+        # server-side path normalisation.
+        assert not CALDAV_RESOURCE_PATH_PATTERN.match(
+            "/calendars/resources/%2e%2e/default/"
+        )
+        # And it must NOT accept the user collection.
+        assert not CALDAV_RESOURCE_PATH_PATTERN.match(
+            "/calendars/users/alice@example.com/default/"
+        )
+
+    def test_user_path_pattern_matches(self):
+        """The user pattern accepts emails (raw or percent-encoded)."""
+        assert CALDAV_USER_PATH_PATTERN.match(
+            "/calendars/users/alice@example.com/default/"
+        )
+        assert CALDAV_USER_PATH_PATTERN.match(
+            "/calendars/users/alice%40example.com/default/"
+        )
+        # User pattern must NOT accept the resource collection.
+        assert not CALDAV_USER_PATH_PATTERN.match(
+            "/calendars/resources/abc-123/default/"
         )
 
     def test_resource_path_denied_when_user_has_no_org(self):
@@ -204,7 +271,7 @@ class TestIsOrgAdminPermission:
 
 
 # ---------------------------------------------------------------------------
-# CalDAV proxy — X-CalDAV-Organization header forwarding
+# CalDAV proxy — X-LS-Org-Id header forwarding
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +282,7 @@ class TestCalDAVProxyOrgHeader:
 
     @responses.activate
     def test_proxy_sends_org_header(self):
-        """CalDAV proxy sends X-CalDAV-Organization for users with an org."""
+        """CalDAV proxy sends X-LS-Org-Id for users with an org."""
         org = factories.OrganizationFactory(external_id="org-alpha")
         user = factories.UserFactory(email="alice@example.com", organization=org)
 
@@ -237,11 +304,11 @@ class TestCalDAVProxyOrgHeader:
 
         assert len(responses.calls) == 1
         request = responses.calls[0].request
-        assert request.headers["X-CalDAV-Organization"] == str(org.id)
+        assert request.headers["X-LS-Org-Id"] == str(org.id)
 
     @responses.activate
     def test_proxy_cannot_spoof_org_header(self):
-        """Client-sent X-CalDAV-Organization is overwritten by the proxy."""
+        """Client-sent X-LS-Org-Id is overwritten by the proxy."""
         org = factories.OrganizationFactory(external_id="real-org")
         user = factories.UserFactory(email="alice@example.com", organization=org)
 
@@ -263,18 +330,18 @@ class TestCalDAVProxyOrgHeader:
         client.generic(
             "PROPFIND",
             "/caldav/principals/resources/",
-            HTTP_X_CALDAV_ORGANIZATION="spoofed-org-id",
+            HTTP_X_LS_ORG_ID="spoofed-org-id",
         )
 
         assert len(responses.calls) == 1
         request = responses.calls[0].request
         # The proxy should use the user's real org ID, not the spoofed one
-        assert request.headers["X-CalDAV-Organization"] == str(org.id)
-        assert request.headers["X-CalDAV-Organization"] != "spoofed-org-id"
+        assert request.headers["X-LS-Org-Id"] == str(org.id)
+        assert request.headers["X-LS-Org-Id"] != "spoofed-org-id"
 
     @responses.activate
     def test_proxy_sends_sharing_level_header(self):
-        """CalDAV proxy sends X-CalDAV-Sharing-Level from org's effective level."""
+        """CalDAV proxy sends X-LS-Org-Sharing-Level from org's effective level."""
         org = factories.OrganizationFactory(
             external_id="org-fb", default_sharing_level="none"
         )
@@ -298,7 +365,7 @@ class TestCalDAVProxyOrgHeader:
 
         assert len(responses.calls) == 1
         request = responses.calls[0].request
-        assert request.headers["X-CalDAV-Sharing-Level"] == "none"
+        assert request.headers["X-LS-Org-Sharing-Level"] == "none"
 
 
 # ---------------------------------------------------------------------------

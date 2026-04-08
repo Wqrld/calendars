@@ -27,11 +27,19 @@ class AvailabilityPlugin extends ServerPlugin
     /** @var Server */
     protected $server;
 
+    /** @var \PDO */
+    private $pdo;
+
     /** CalDAV namespace */
     private const CALDAV_NS = '{urn:ietf:params:xml:ns:caldav}';
 
     /** calendar-availability property name */
     private const AVAILABILITY_PROP = '{urn:ietf:params:xml:ns:caldav}calendar-availability';
+
+    public function __construct(\PDO $pdo = null)
+    {
+        $this->pdo = $pdo;
+    }
 
     public function initialize(Server $server)
     {
@@ -212,6 +220,30 @@ class AvailabilityPlugin extends ServerPlugin
             return null;
         }
 
+        // Query propertystorage directly to bypass ACL checks.
+        // The outbox request is made by the querier, who doesn't have
+        // read access to the target user's calendar home properties.
+        if ($this->pdo) {
+            try {
+                $stmt = $this->pdo->prepare(
+                    'SELECT value FROM propertystorage '
+                    . 'WHERE path = ? AND name = ? LIMIT 1'
+                );
+                $stmt->execute([$calendarHomePath, self::AVAILABILITY_PROP]);
+                $value = $stmt->fetchColumn();
+                if ($value !== false && $value !== null) {
+                    // PostgreSQL may return a stream resource for bytea columns
+                    if (is_resource($value)) {
+                        $value = stream_get_contents($value);
+                    }
+                    return $value;
+                }
+            } catch (\Exception $e) {
+                error_log("[AvailabilityPlugin] DB query failed: " . $e->getMessage());
+            }
+        }
+
+        // Fallback to DAV getProperties (works if requester has read access)
         try {
             $properties = $this->server->getProperties(
                 $calendarHomePath,
@@ -473,7 +505,9 @@ class AvailabilityPlugin extends ServerPlugin
     }
 
     /**
-     * Inject FREEBUSY;FBTYPE=BUSY-UNAVAILABLE lines into a VFREEBUSY ICS string.
+     * Inject FREEBUSY;FBTYPE=BUSY-UNAVAILABLE periods into a VFREEBUSY
+     * ICS string by parsing with VObject, adding structured properties,
+     * and re-serializing — never via substring surgery.
      *
      * @param string $icsData
      * @param array $busyPeriods
@@ -481,21 +515,32 @@ class AvailabilityPlugin extends ServerPlugin
      */
     private function injectBusyUnavailable($icsData, array $busyPeriods)
     {
-        // Build FREEBUSY lines
-        $lines = '';
-        foreach ($busyPeriods as $period) {
-            $start = $period['start']->format('Ymd\THis\Z');
-            $end = $period['end']->format('Ymd\THis\Z');
-            $lines .= "FREEBUSY;FBTYPE=BUSY-UNAVAILABLE:{$start}/{$end}\r\n";
-        }
-
-        // Insert before END:VFREEBUSY
-        $pos = strpos($icsData, "END:VFREEBUSY");
-        if ($pos === false) {
+        try {
+            $vcalendar = Reader::read($icsData);
+        } catch (\Exception $e) {
+            error_log(
+                "[AvailabilityPlugin] Failed to parse VFREEBUSY ICS for "
+                . "injection: " . $e->getMessage()
+            );
             return null;
         }
 
-        return substr($icsData, 0, $pos) . $lines . substr($icsData, $pos);
+        if (!isset($vcalendar->VFREEBUSY)) {
+            return null;
+        }
+        $vfreebusy = $vcalendar->VFREEBUSY;
+
+        foreach ($busyPeriods as $period) {
+            $start = $period['start']->format('Ymd\THis\Z');
+            $end = $period['end']->format('Ymd\THis\Z');
+            $vfreebusy->add(
+                'FREEBUSY',
+                $start . '/' . $end,
+                ['FBTYPE' => 'BUSY-UNAVAILABLE']
+            );
+        }
+
+        return $vcalendar->serialize();
     }
 
     public function getPluginName()

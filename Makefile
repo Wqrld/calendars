@@ -265,9 +265,11 @@ shell-db: ## connect to database shell
 .PHONY: shell-db
 
 reset-db: FLUSH_ARGS ?=
-reset-db: ## flush database
+reset-db: build ## flush database and re-run migrations
 	@echo "$(BOLD)Flush database$(RESET)"
 	@$(MANAGE) flush $(FLUSH_ARGS)
+	@$(MAKE) migrate
+	@$(MAKE) migrate-caldav
 .PHONY: reset-db
 
 demo: ## flush db then create a demo
@@ -291,6 +293,11 @@ shell-front: ## open a shell in the frontend container
 .PHONY: shell-front
 
 # -- Misc
+
+fake-messages: ## start a fake Messages API server on port 8940
+	@echo "$(BOLD)Starting fake Messages API server...$(RESET)"
+	@python3 scripts/fake_messages_server.py
+.PHONY: fake-messages
 
 clean: ## restore repository state as it was freshly cloned
 	git clean -idx

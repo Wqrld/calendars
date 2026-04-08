@@ -60,6 +60,23 @@ export type CalDavCalendar = Pick<DAVCalendar, 'url' | 'ctag' | 'syncToken' | 'c
   displayName: string
   description?: string
   color?: string
+  /** Whether this calendar's events count toward freebusy (default: true) */
+  includeInAvailability: boolean
+  /** Owner principal type: "MAILBOX" for mailbox calendars, undefined otherwise */
+  ownerType?: string
+  /**
+   * Email of the owning mailbox principal, parsed from the
+   * ``CS:invite/CS:organizer`` href returned by SabreDAV. Only set when
+   * ``ownerType === "MAILBOX"``. Available immediately on every
+   * calendar fetch — does not depend on mailbox-context hydration.
+   */
+  mailboxEmail?: string
+  /**
+   * Sharees parsed from the ``CS:invite`` payload returned alongside
+   * the standard calendar properties. The share modal reads this
+   * directly instead of issuing a second PROPFIND.
+   */
+  sharees?: CalDavSharee[]
   resourcetype?: string[]
   headers?: Record<string, string>
   fetchOptions?: RequestInit
@@ -78,6 +95,8 @@ export type CalDavCalendarUpdate = {
   description?: string
   color?: string
   timezone?: string
+  /** Toggle whether this calendar counts toward freebusy/availability */
+  includeInAvailability?: boolean
 }
 
 // ============================================================================
@@ -134,8 +153,6 @@ export type CalDavSharee = {
 export type CalDavShareInvite = {
   calendarUrl: string
   sharees: CalDavSharee[]
-  summary?: string
-  comment?: string
 }
 
 export type CalDavShareResponse = {

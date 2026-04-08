@@ -10,7 +10,6 @@ import {
   buildMkCalendarXml,
   buildProppatchXml,
   sharePrivilegeToXml,
-  sharePrivilegeToSummary,
   parseSharePrivilege,
   buildShareeSetXml,
   buildShareRequestXml,
@@ -19,6 +18,7 @@ import {
   buildSyncCollectionXml,
   buildPrincipalSearchXml,
   parseCalendarComponents,
+  parseDavErrorMessage,
   parseShareStatus,
   getCalendarUrlFromEventUrl,
 } from '../caldav-helpers'
@@ -166,8 +166,10 @@ describe('caldav-helpers', () => {
         expect(sharePrivilegeToXml('read-write')).toBe('<CS:read-write/>')
       })
 
-      it('converts admin privilege', () => {
-        expect(sharePrivilegeToXml('admin')).toBe('<CS:admin/>')
+      it('rides admin on top of read-write (no <CS:admin/> upstream)', () => {
+        // Upstream sabre/dav silently demotes <CS:admin/> to read; we
+        // carry the admin marker via LS:share-access instead.
+        expect(sharePrivilegeToXml('admin')).toBe('<CS:read-write/>')
       })
 
       it('converts freebusy privilege to read (CalDAV level)', () => {
@@ -179,31 +181,9 @@ describe('caldav-helpers', () => {
       })
     })
 
-    describe('sharePrivilegeToSummary', () => {
-      it('returns freebusy marker for freebusy privilege', () => {
-        expect(sharePrivilegeToSummary('freebusy')).toBe('access:freebusy')
-      })
-
-      it('returns undefined for read privilege', () => {
-        expect(sharePrivilegeToSummary('read')).toBeUndefined()
-      })
-
-      it('returns undefined for read-write privilege', () => {
-        expect(sharePrivilegeToSummary('read-write')).toBeUndefined()
-      })
-
-      it('returns undefined for admin privilege', () => {
-        expect(sharePrivilegeToSummary('admin')).toBeUndefined()
-      })
-    })
-
     describe('parseSharePrivilege', () => {
-      it('returns read-write when present', () => {
+      it('returns read-write when present and no override', () => {
         expect(parseSharePrivilege({ 'read-write': true })).toBe('read-write')
-      })
-
-      it('returns admin when present', () => {
-        expect(parseSharePrivilege({ admin: true })).toBe('admin')
       })
 
       it('returns read-write when camelCase key from tsdav (readWrite)', () => {
@@ -215,21 +195,21 @@ describe('caldav-helpers', () => {
         expect(parseSharePrivilege(null)).toBe('read')
       })
 
-      it('returns freebusy when access is read and summary is freebusy marker', () => {
-        expect(parseSharePrivilege({}, 'access:freebusy')).toBe('freebusy')
+      it('LS:share-access "freebusy" wins over CS:read', () => {
+        expect(parseSharePrivilege({}, 'freebusy')).toBe('freebusy')
       })
 
-      it('returns read when access is read and summary is not freebusy marker', () => {
-        expect(parseSharePrivilege({}, 'some other summary')).toBe('read')
+      it('LS:share-access "admin" wins over CS:read-write', () => {
+        // Admin shares are stored as ACCESS_READWRITE upstream + an
+        // LS:share-access "admin" override; the override must take
+        // precedence so the UI shows "admin" instead of "read-write".
+        expect(parseSharePrivilege({ 'read-write': true }, 'admin')).toBe('admin')
+        expect(parseSharePrivilege({ readWrite: true }, 'admin')).toBe('admin')
+      })
+
+      it('returns read when no override and access is empty', () => {
+        expect(parseSharePrivilege({}, 'something-else')).toBe('read')
         expect(parseSharePrivilege({}, undefined)).toBe('read')
-      })
-
-      it('ignores freebusy summary when access is read-write', () => {
-        expect(parseSharePrivilege({ 'read-write': true }, 'access:freebusy')).toBe('read-write')
-      })
-
-      it('ignores freebusy summary when access is admin', () => {
-        expect(parseSharePrivilege({ admin: true }, 'access:freebusy')).toBe('admin')
       })
     })
 
@@ -253,40 +233,43 @@ describe('caldav-helpers', () => {
         expect(result).toContain('<CS:common-name>John Doe</CS:common-name>')
       })
 
-      it('includes summary when provided', () => {
-        const result = buildShareeSetXml({
-          href: 'mailto:user@example.com',
-          summary: 'Shared calendar',
-          privilege: 'read',
-        })
-        expect(result).toContain('<CS:summary>Shared calendar</CS:summary>')
-      })
-
-      it('auto-injects freebusy summary marker for freebusy privilege', () => {
+      it('includes LS:share-access "freebusy" for freebusy privilege', () => {
         const result = buildShareeSetXml({
           href: 'mailto:user@example.com',
           privilege: 'freebusy',
         })
         expect(result).toContain('<CS:read/>')
-        expect(result).toContain('<CS:summary>access:freebusy</CS:summary>')
+        expect(result).toContain('<LS:share-access>freebusy</LS:share-access>')
       })
 
-      it('does not inject summary for non-freebusy privileges', () => {
+      it('includes LS:share-access "admin" for admin privilege', () => {
+        const result = buildShareeSetXml({
+          href: 'mailto:user@example.com',
+          privilege: 'admin',
+        })
+        // Admin rides on read-write because upstream sabre/dav has no
+        // CS:admin element; the marker is what makes it admin.
+        expect(result).toContain('<CS:read-write/>')
+        expect(result).toContain('<LS:share-access>admin</LS:share-access>')
+      })
+
+      it('emits empty LS:share-access for read so backend resets the override', () => {
+        // The empty marker tells the backend to clear any previously
+        // stored override (e.g. a sharee being moved off freebusy).
+        // Without it, the share_access_level column stays pinned.
+        const result = buildShareeSetXml({
+          href: 'mailto:user@example.com',
+          privilege: 'read',
+        })
+        expect(result).toContain('<LS:share-access></LS:share-access>')
+      })
+
+      it('emits empty LS:share-access for read-write so backend resets the override', () => {
         const result = buildShareeSetXml({
           href: 'mailto:user@example.com',
           privilege: 'read-write',
         })
-        expect(result).not.toContain('<CS:summary>')
-      })
-
-      it('explicit summary takes precedence over freebusy auto-summary', () => {
-        const result = buildShareeSetXml({
-          href: 'mailto:user@example.com',
-          summary: 'Custom summary',
-          privilege: 'freebusy',
-        })
-        expect(result).toContain('<CS:summary>Custom summary</CS:summary>')
-        expect(result).not.toContain('access:freebusy')
+        expect(result).toContain('<LS:share-access></LS:share-access>')
       })
     })
 
@@ -300,6 +283,14 @@ describe('caldav-helpers', () => {
         expect(result).toContain('<CS:share')
         expect(result).toContain('mailto:user1@example.com')
         expect(result).toContain('mailto:user2@example.com')
+      })
+
+      it('declares the LS namespace so LS:share-access is valid', () => {
+        const result = buildShareRequestXml([
+          { href: 'mailto:user@example.com', privilege: 'freebusy' },
+        ])
+        expect(result).toMatch(/xmlns:LS=['"]/)
+        expect(result).toContain('<LS:share-access>freebusy</LS:share-access>')
       })
     })
 
@@ -416,6 +407,65 @@ describe('caldav-helpers', () => {
 
       it('returns declined as default', () => {
         expect(parseShareStatus(false, false)).toBe('declined')
+      })
+    })
+
+    describe('parseDavErrorMessage', () => {
+      const SABREDAV_FORBIDDEN = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        + '<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">\n'
+        + '  <s:sabredav-version>4.7.0</s:sabredav-version>\n'
+        + '  <s:exception>Sabre\\DAV\\Exception\\Forbidden</s:exception>\n'
+        + '  <s:message>This sharee is managed by Messages and can only be '
+        + 'changed there. Update the mailbox permissions in Messages '
+        + 'instead.</s:message>\n'
+        + '</d:error>'
+      )
+
+      it('extracts the s:message from a SabreDAV Forbidden error', () => {
+        expect(parseDavErrorMessage(SABREDAV_FORBIDDEN)).toBe(
+          'This sharee is managed by Messages and can only be '
+          + 'changed there. Update the mailbox permissions in Messages '
+          + 'instead.',
+        )
+      })
+
+      it('returns undefined for an empty body', () => {
+        expect(parseDavErrorMessage('')).toBeUndefined()
+      })
+
+      it('returns undefined for malformed XML', () => {
+        expect(parseDavErrorMessage('not <xml at all >>>')).toBeUndefined()
+      })
+
+      it('returns undefined when no s:message element is present', () => {
+        const body = (
+          '<?xml version="1.0"?>'
+          + '<d:error xmlns:d="DAV:"><d:other/></d:error>'
+        )
+        expect(parseDavErrorMessage(body)).toBeUndefined()
+      })
+
+      it('returns undefined when s:message is empty / whitespace only', () => {
+        const body = (
+          '<?xml version="1.0"?>'
+          + '<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">'
+          + '<s:message>   </s:message>'
+          + '</d:error>'
+        )
+        expect(parseDavErrorMessage(body)).toBeUndefined()
+      })
+
+      it('handles multi-element bodies and picks the first s:message', () => {
+        const body = (
+          '<?xml version="1.0"?>'
+          + '<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">'
+          + '<s:exception>X</s:exception>'
+          + '<s:message>first</s:message>'
+          + '<s:message>second</s:message>'
+          + '</d:error>'
+        )
+        expect(parseDavErrorMessage(body)).toBe('first')
       })
     })
 

@@ -3,18 +3,20 @@
  * Wraps the UI Kit ShareModal for managing calendar sharing via CalDAV.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { ShareModal } from "@gouvfr-lasuite/ui-kit";
 
 import { useCalendarContext } from "../../contexts";
 import { useAuth } from "../../../auth/Auth";
+import { useMailboxContext } from "@/features/mailbox/MailboxContext";
 import {
   addToast,
   ToasterItem,
 } from "../../../ui/components/toaster/Toaster";
 import type {
   CalDavCalendar,
+  CalDavSharee,
   SharePrivilege,
 } from "../../services/dav/types/caldav-service";
 import { fetchAPI } from "@/features/api/fetchApi";
@@ -47,6 +49,14 @@ const SHARE_ROLES: SharePrivilege[] = [
   "admin",
 ];
 
+const ROLE_KEYS: Record<string, string> = {
+  freebusy: "roles.freebusy",
+  read: "roles.reader",
+  "read-write": "roles.editor",
+  admin: "roles.administrator",
+  owner: "roles.owner",
+};
+
 export const CalendarShareModal = ({
   isOpen,
   calendar,
@@ -55,61 +65,95 @@ export const CalendarShareModal = ({
   const { t } = useTranslation();
   const { caldavService, shareCalendar } = useCalendarContext();
   const { user } = useAuth();
-  const [accesses, setAccesses] = useState<ShareAccess[]>([]);
+  const { availableMailboxes } = useMailboxContext();
+  // ``rawSharees`` is the latest source of truth for the share list:
+  // it starts as ``calendar.sharees`` (already parsed from the standard
+  // PROPFIND CS:invite payload) and gets replaced after every
+  // invite/update/delete by re-fetching the calendar.
+  const [rawSharees, setRawSharees] = useState<CalDavSharee[]>([]);
   const [searchResults, setSearchResults] = useState<ShareUser[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const buildAccesses = useCallback(
-    (sharees: ShareAccess[]) => {
-      const ownerAccess: ShareAccess | null = user
-        ? {
-            id: "owner",
-            role: "owner",
-            can_delete: false,
-            user: {
-              id: user.id,
-              full_name: user.email,
-              email: user.email,
-            },
-          }
-        : null;
-      return ownerAccess ? [ownerAccess, ...sharees] : sharees;
-    },
-    [user],
-  );
+  // Mailbox detection comes straight from the calendar's DAV
+  // properties — both ``ownerType`` and ``mailboxEmail`` are populated
+  // by ``parseCalendarPropfindResponse``, so they are stable from the
+  // first render and never depend on ``useMailboxSync`` hydration.
+  const isMailbox = calendar?.ownerType === "MAILBOX";
+  const mailboxEmail = calendar?.mailboxEmail;
 
-  const fetchSharees = useCallback(async () => {
+  const mailboxData = useMemo(() => {
+    if (!mailboxEmail) return null;
+    return availableMailboxes.find((mb) => mb.email === mailboxEmail) ?? null;
+  }, [mailboxEmail, availableMailboxes]);
+
+  const mailboxUsers = useMemo(() => {
+    if (!mailboxData) return new Set<string>();
+    return new Set(mailboxData.users.map((u) => u.email));
+  }, [mailboxData]);
+
+  const isMailboxAdmin = mailboxData?.role === "admin";
+
+  // Seed/reset the share list when the modal opens or the calendar
+  // changes. The initial sharees come from ``calendar.sharees`` —
+  // already parsed by ``CalDavService`` — so we don't need an extra
+  // PROPFIND just to render.
+  useEffect(() => {
+    if (isOpen && calendar) {
+      setRawSharees(calendar.sharees ?? []);
+    }
+    if (!isOpen) {
+      setRawSharees([]);
+      setSearchResults([]);
+    }
+  }, [isOpen, calendar]);
+
+  // Re-fetch the calendar to refresh its sharees after a mutation.
+  // ``CS:invite`` rides on the standard calendar fetch, so this is a
+  // single round-trip that keeps the modal in sync.
+  const refreshSharees = useCallback(async () => {
     if (!calendar) return;
-
-    const result = await caldavService.getCalendarSharees(calendar.url);
+    const result = await caldavService.fetchCalendar(calendar.url);
     if (result.success && result.data) {
-      const shareeAccesses = result.data.map((sharee) => {
+      setRawSharees(result.data.sharees ?? []);
+    }
+  }, [calendar, caldavService]);
+
+  // Project the raw sharee list into the ShareModal's expected shape,
+  // injecting the owner row at the top for non-mailbox calendars and
+  // marking sync-managed entries as non-deletable.
+  const accesses: ShareAccess[] = useMemo(() => {
+    const shareeAccesses = rawSharees
+      .filter(
+        (sharee) => !(isMailbox && (sharee.privilege as string) === "owner"),
+      )
+      .map((sharee) => {
         const email = sharee.href.replace(/^mailto:/, "");
+        const isSyncManaged = isMailbox && mailboxUsers.has(email);
         return {
           id: sharee.href,
           role: sharee.privilege,
+          can_delete: !isSyncManaged,
+          is_sync_managed: isSyncManaged,
           user: {
             id: sharee.href,
             full_name: sharee.displayName || email,
             email,
           },
-        };
+        } as ShareAccess;
       });
-      setAccesses(buildAccesses(shareeAccesses));
-    } else {
-      setAccesses(buildAccesses([]));
-    }
-  }, [calendar, caldavService, buildAccesses]);
-
-  useEffect(() => {
-    if (isOpen && calendar) {
-      fetchSharees();
-    }
-    if (!isOpen) {
-      setAccesses([]);
-      setSearchResults([]);
-    }
-  }, [isOpen, calendar, fetchSharees]);
+    if (isMailbox || !user) return shareeAccesses;
+    const ownerAccess: ShareAccess = {
+      id: "owner",
+      role: "owner",
+      can_delete: false,
+      user: {
+        id: user.id,
+        full_name: user.email,
+        email: user.email,
+      },
+    };
+    return [ownerAccess, ...shareeAccesses];
+  }, [rawSharees, isMailbox, mailboxUsers, user]);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -196,7 +240,7 @@ export const CalendarShareModal = ({
               })}
             </ToasterItem>,
           );
-          await fetchSharees();
+          await refreshSharees();
         } else {
           addToast(
             <ToasterItem type="error">
@@ -215,12 +259,28 @@ export const CalendarShareModal = ({
         setSearchResults([]);
       }
     },
-    [calendar, shareCalendar, fetchSharees, t],
+    [calendar, shareCalendar, refreshSharees, t],
   );
 
   const handleUpdateAccess = useCallback(
     async (access: ShareAccess, role: string) => {
       if (!calendar) return;
+
+      // Sync-managed shares are owned by Messages — clicking the
+      // (single) role in the dropdown must be a no-op. Otherwise the
+      // ShareModal still fires onChange and we'd POST a CS:share that
+      // the MailboxPlugin rightfully rejects with 403 (mailbox
+      // calendars cannot be granted write access via manual sharing).
+      if (
+        (access as ShareAccess & { is_sync_managed?: boolean }).is_sync_managed
+      ) {
+        return;
+      }
+      // Clicking the same role on a non-sync-managed entry is also a
+      // no-op — there's nothing to update and the round-trip is wasted.
+      if (role === access.role) {
+        return;
+      }
 
       setLoading(true);
       try {
@@ -230,7 +290,7 @@ export const CalendarShareModal = ({
         const email = access.user.email;
         const result = await shareCalendar(calendar.url, email, privilege);
         if (result.success) {
-          await fetchSharees();
+          await refreshSharees();
         } else {
           addToast(
             <ToasterItem type="error">
@@ -248,12 +308,21 @@ export const CalendarShareModal = ({
         setLoading(false);
       }
     },
-    [calendar, shareCalendar, fetchSharees, t],
+    [calendar, shareCalendar, refreshSharees, t],
   );
 
   const handleDeleteAccess = useCallback(
     async (access: ShareAccess) => {
       if (!calendar) return;
+
+      // Same guard as handleUpdateAccess: sync-managed rows belong to
+      // Messages and must never be touched from this modal, even if a
+      // delete handler somehow makes it through the per-row UI gates.
+      if (
+        (access as ShareAccess & { is_sync_managed?: boolean }).is_sync_managed
+      ) {
+        return;
+      }
 
       setLoading(true);
       try {
@@ -265,7 +334,7 @@ export const CalendarShareModal = ({
           shareeHref,
         );
         if (result.success) {
-          await fetchSharees();
+          await refreshSharees();
         } else {
           addToast(
             <ToasterItem type="error">
@@ -283,30 +352,37 @@ export const CalendarShareModal = ({
         setLoading(false);
       }
     },
-    [calendar, caldavService, fetchSharees, t],
+    [calendar, caldavService, refreshSharees, t],
   );
 
-  const invitationRoles = [
-    { label: t("roles.freebusy"), value: "freebusy" },
-    { label: t("roles.reader"), value: "read" },
-    { label: t("roles.editor"), value: "read-write" },
-    { label: t("roles.administrator"), value: "admin" },
-  ];
+  const makeRoles = (values: string[]) =>
+    values.map((v) => ({ label: t(ROLE_KEYS[v] || v), value: v }));
 
-  const getAccessRoles = useCallback(
-    (access: ShareAccess) => {
-      if (access.role === "owner") {
-        return [{ label: t("roles.owner"), value: "owner" }];
-      }
-      return [
-        { label: t("roles.freebusy"), value: "freebusy" },
-        { label: t("roles.reader"), value: "read" },
-        { label: t("roles.editor"), value: "read-write" },
-        { label: t("roles.administrator"), value: "admin" },
-      ];
-    },
-    [t],
-  );
+  // The first entry is shown as the default in the invite dropdown
+  // (ui-kit ShareModal uses ``invitationRoles[0].value``). Reader is
+  // the safest, most common share level, so it leads.
+  const invitationRoles = isMailbox
+    ? makeRoles(["read", "freebusy"])
+    : makeRoles(["read", "freebusy", "read-write", "admin"]);
+
+  const getAccessRoles = (access: ShareAccess) => {
+    if (access.role === "owner") {
+      return makeRoles(["owner"]);
+    }
+    if ((access as ShareAccess & { is_sync_managed?: boolean }).is_sync_managed) {
+      return makeRoles([access.role]);
+    }
+    // Mailbox calendars cap manual sharing at read-only (``freebusy``
+    // rides on top of ``CS:read``). ``read-write`` and ``admin`` must
+    // come via the Messages sync — ``MailboxPlugin::restrictSharing``
+    // rejects them with 403 — so we don't even offer them in the
+    // dropdown. This mirrors the same limitation already applied to
+    // ``invitationRoles`` above.
+    if (isMailbox) {
+      return makeRoles(["read", "freebusy"]);
+    }
+    return makeRoles(["freebusy", "read", "read-write", "admin"]);
+  };
 
   return (
     <ShareModal
@@ -315,15 +391,43 @@ export const CalendarShareModal = ({
       modalTitle={t("calendar.shareCalendar.title")}
       accesses={accesses}
       getAccessRoles={getAccessRoles}
-      onDeleteAccess={handleDeleteAccess}
-      onUpdateAccess={handleUpdateAccess}
-      searchUsersResult={searchResults}
-      onSearchUsers={handleSearchUsers}
-      onInviteUser={handleInviteUser}
+      canUpdate={!isMailbox || isMailboxAdmin}
+      accessRoleTopMessage={(access: ShareAccess) =>
+        (access as ShareAccess & { is_sync_managed?: boolean }).is_sync_managed
+          ? t("calendar.shareCalendar.syncManagedHint")
+          : undefined
+      }
+      onDeleteAccess={isMailbox && !isMailboxAdmin ? undefined : handleDeleteAccess}
+      onUpdateAccess={isMailbox && !isMailboxAdmin ? undefined : handleUpdateAccess}
+      searchUsersResult={isMailbox && !isMailboxAdmin ? [] : searchResults}
+      onSearchUsers={isMailbox && !isMailboxAdmin ? () => {} : handleSearchUsers}
+      onInviteUser={isMailbox && !isMailboxAdmin ? () => {} : handleInviteUser}
       searchPlaceholder={t("calendar.shareCalendar.emailPlaceholder")}
       invitationRoles={invitationRoles}
-      hideInvitations
+      hideInvitations={isMailbox && !isMailboxAdmin}
       loading={loading}
-    />
+    >
+      {isMailbox && (
+        <div style={{
+          margin: "0 16px 12px",
+          padding: "12px 16px",
+          backgroundColor: "#f0f4ff",
+          border: "1px solid #c5d4f0",
+          borderRadius: "6px",
+          fontSize: "14px",
+          color: "#334155",
+          display: "flex",
+          gap: "10px",
+          alignItems: "flex-start",
+        }}>
+          <span className="material-icons" style={{ fontSize: "20px", color: "#3b82f6", flexShrink: 0, marginTop: "1px" }}>info</span>
+          <span>
+            {isMailboxAdmin
+              ? t("calendar.shareCalendar.mailboxInfoAdmin", { email: mailboxData?.email })
+              : t("calendar.shareCalendar.mailboxInfoReadonly", { email: mailboxData?.email })}
+          </span>
+        </div>
+      )}
+    </ShareModal>
   );
 };
