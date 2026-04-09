@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { ShareModal } from "@gouvfr-lasuite/ui-kit";
+import { Alert, VariantType } from "@gouvfr-lasuite/cunningham-react";
 
 import { useCalendarContext } from "../../contexts";
 import { useAuth } from "../../../auth/Auth";
@@ -408,24 +409,16 @@ export const CalendarShareModal = ({
       loading={loading}
     >
       {isMailbox && (
-        <div style={{
-          margin: "0 16px 12px",
-          padding: "12px 16px",
-          backgroundColor: "#f0f4ff",
-          border: "1px solid #c5d4f0",
-          borderRadius: "6px",
-          fontSize: "14px",
-          color: "#334155",
-          display: "flex",
-          gap: "10px",
-          alignItems: "flex-start",
-        }}>
-          <span className="material-icons" style={{ fontSize: "20px", color: "#3b82f6", flexShrink: 0, marginTop: "1px" }}>info</span>
-          <span>
+        <div style={{ margin: "0 16px 12px" }}>
+          <Alert
+            className="app__alert--small"
+            type={VariantType.INFO}
+            icon={<span className="material-icons">info</span>}
+          >
             {isMailboxAdmin
               ? t("calendar.shareCalendar.mailboxInfoAdmin", { email: mailboxData?.email })
               : t("calendar.shareCalendar.mailboxInfoReadonly", { email: mailboxData?.email })}
-          </span>
+          </Alert>
         </div>
       )}
     </ShareModal>

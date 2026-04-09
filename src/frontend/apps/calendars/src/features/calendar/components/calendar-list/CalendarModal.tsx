@@ -8,12 +8,15 @@
 import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Alert,
   Button,
   Input,
   Modal,
   ModalSize,
   Select,
+  VariantType,
 } from "@gouvfr-lasuite/cunningham-react";
+import { errorToString } from "@/features/api/APIError";
 import { useAuth } from "@/features/auth/Auth";
 import { useConfig } from "@/features/config/ConfigProvider";
 import { useMailboxContext } from "@/features/mailbox/MailboxContext";
@@ -124,9 +127,7 @@ export const CalendarModal = ({
         onClose();
       }
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : t("api.error.unexpected"),
-      );
+      setError(errorToString(err));
     } finally {
       setIsLoading(false);
     }
@@ -183,11 +184,21 @@ export const CalendarModal = ({
       <div className="calendar-modal__content">
         {isOnboarding && (
           <p className="calendar-modal__onboarding-text">
-            {t("calendar.onboarding.description")}
+            {hasMailboxes
+              ? t("calendar.onboarding.description")
+              : t("calendar.onboarding.noMailboxesMessage")}
           </p>
         )}
 
-        {error && <div className="calendar-modal__error">{error}</div>}
+        {error && (
+          <Alert
+            className="app__alert--small"
+            type={VariantType.ERROR}
+            icon={<span className="material-icons">error</span>}
+          >
+            {error}
+          </Alert>
+        )}
 
         {hasMailboxes && mode === "create" && (
           <div className="calendar-modal__field">
@@ -228,17 +239,20 @@ export const CalendarModal = ({
           </div>
         )}
 
-        {!hasMailboxes && mode === "create" && (
+        {!hasMailboxes && mode === "create" && !isOnboarding && (
           <p className="calendar-modal__mailbox-hint">
             {t("calendar.createCalendar.noMailboxAvailable")}
           </p>
         )}
 
         {mode === "edit" && calendar?.mailboxEmail && (
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 0", color: "#555", fontSize: "14px" }}>
-            <span className="material-icons" style={{ fontSize: "18px" }}>mail</span>
-            <span>{t("calendar.editCalendar.linkedMailbox", { email: calendar.mailboxEmail })}</span>
-          </div>
+          <Alert
+            className="app__alert--small"
+            type={VariantType.INFO}
+            icon={<span className="material-icons">mail</span>}
+          >
+            {t("calendar.editCalendar.linkedMailbox", { email: calendar.mailboxEmail })}
+          </Alert>
         )}
 
         <Input

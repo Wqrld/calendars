@@ -863,7 +863,7 @@ class Base(Configuration):
                     environ_name="LOGGING_LEVEL_LOGGERS_APP",
                     environ_prefix=None,
                 ),
-                "propagate": True,
+                "propagate": False,
             },
         },
     }

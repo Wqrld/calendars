@@ -37,27 +37,46 @@ class SetupServiceError(Exception):
 def _resolve_mailbox_org_id(mailbox_data):
     """Resolve the mailbox's organization PK from a Messages response.
 
-    Messages returns ``maildomain_custom_attributes`` containing the org
-    claim (e.g. SIRET). We look up the matching ``Organization`` in our DB
-    by ``external_id``. If no row exists yet (no user from that org has
-    ever logged into Calendars), we auto-create one with a placeholder
-    name — it will be renamed the next time a user from that org logs in
-    via the OIDC backend's ``resolve_organization`` flow.
+    Mirrors ``backends._resolve_org_external_id``:
 
-    Returns the org PK as string. Raises ``SetupServiceError`` if the
-    Messages response does not provide a usable organization claim.
+    - When ``OIDC_USERINFO_ORGANIZATION_CLAIM`` is configured, the
+      mailbox's ``maildomain_custom_attributes`` MUST carry that claim.
+      No fallback — deployments that opt into the claim want strict
+      org identity and a missing claim is an error.
+    - When the setting is empty, fall back to the mailbox's email
+      domain so deployments without an org claim still work.
+
+    We look up the matching ``Organization`` in our DB by ``external_id``.
+    If no row exists yet (no user from that org has ever logged into
+    Calendars), we auto-create one with a placeholder name — it will be
+    renamed the next time a user from that org logs in via the OIDC
+    backend's ``resolve_organization`` flow.
+
+    Returns the org PK as string. Raises ``SetupServiceError`` if no
+    identifier can be resolved under the active policy.
     """
+    mailbox_email = mailbox_data.get("email", "")
     custom_attrs = mailbox_data.get("maildomain_custom_attributes") or {}
     org_claim = settings.OIDC_USERINFO_ORGANIZATION_CLAIM
-    if not org_claim:
-        raise SetupServiceError("OIDC_USERINFO_ORGANIZATION_CLAIM is not configured")
 
-    external_id = custom_attrs.get(org_claim)
-    if not external_id:
-        raise SetupServiceError(
-            f"Mailbox {mailbox_data.get('email', '')} has no "
-            f"'{org_claim}' attribute on its mail domain"
+    if org_claim:
+        external_id = custom_attrs.get(org_claim)
+        if not external_id:
+            raise SetupServiceError(
+                f"Mailbox {mailbox_email} has no "
+                f"'{org_claim}' attribute on its mail domain"
+            )
+    else:
+        external_id = (
+            mailbox_email.split("@")[-1]
+            if mailbox_email and "@" in mailbox_email
+            else None
         )
+        if not external_id:
+            raise SetupServiceError(
+                f"Cannot resolve organization for mailbox {mailbox_email}: "
+                "no organization claim configured and no usable email domain"
+            )
 
     org, created = Organization.objects.get_or_create(
         external_id=external_id,
@@ -68,7 +87,7 @@ def _resolve_mailbox_org_id(mailbox_data):
             "Auto-created Organization external_id=%s for mailbox %s "
             "(name will be updated on first user login)",
             external_id,
-            mailbox_data.get("email", ""),
+            mailbox_email,
         )
     return str(org.id)
 

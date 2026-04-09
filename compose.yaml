@@ -66,6 +66,38 @@ services:
       caldav:
         condition: service_started
 
+  # Hermetic test container — loads ONLY backend.defaults, never
+  # backend.local, so tests don't inherit per-developer overrides like
+  # OIDC_USERINFO_ORGANIZATION_CLAIM, FEATURE_MESSAGES_INTEGRATION, etc.
+  # Used by bin/pytest. Mirrors backend-dev's image and dependencies so
+  # tests that hit Postgres / CalDAV still work.
+  backend-test:
+    user: ${DOCKER_USER:-1000}
+    image: calendars:backend-development
+    environment:
+      - PYLINTHOME=/app/.pylint.d
+      - DJANGO_CONFIGURATION=Test
+    env_file:
+      - env.d/development/backend.defaults
+    volumes:
+      - ./src/backend:/app
+      - ./data/static:/data/static
+      - ./src/frontend/apps/calendars/src/features/i18n/translations.json:/data/translations.json:ro
+      - /app/.venv
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - lasuite
+      - default
+    depends_on:
+      postgresql:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_started
+      caldav:
+        condition: service_started
+
   worker-dev:
     user: ${DOCKER_USER:-1000}
     image: calendars:backend-development

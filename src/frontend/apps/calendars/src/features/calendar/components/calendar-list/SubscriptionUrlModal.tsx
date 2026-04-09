@@ -5,7 +5,13 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Modal, ModalSize } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Alert,
+  Button,
+  Modal,
+  ModalSize,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
 
 import {
   useCreateICalFeedChannel,
@@ -142,9 +148,13 @@ export const SubscriptionUrlModal = ({
               {t("calendar.subscription.loading")}
             </div>
           ) : hasRealError && !displayUrl ? (
-            <div className="subscription-modal__error">
+            <Alert
+              className="app__alert--small"
+              type={VariantType.ERROR}
+              icon={<span className="material-icons">error</span>}
+            >
               {getErrorMessage()}
-            </div>
+            </Alert>
           ) : displayUrl ? (
             <>
               <div className="subscription-modal__url-container">
@@ -166,12 +176,13 @@ export const SubscriptionUrlModal = ({
                 </Button>
               </div>
 
-              <div className="subscription-modal__warning">
-                <span className="material-icons subscription-modal__warning-icon">
-                  warning
-                </span>
-                <p>{t("calendar.subscription.warning")}</p>
-              </div>
+              <Alert
+                className="app__alert--small"
+                type={VariantType.WARNING}
+                icon={<span className="material-icons">warning</span>}
+              >
+                {t("calendar.subscription.warning")}
+              </Alert>
 
               <div className="subscription-modal__actions">
                 <Button

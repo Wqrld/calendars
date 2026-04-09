@@ -73,6 +73,41 @@ def test_resolve_org_from_oidc_claim():
 
 
 @pytest.mark.django_db
+@override_settings(OIDC_USERINFO_ORGANIZATION_CLAIM="siret")
+def test_resolve_org_strict_no_fallback_when_claim_missing():
+    """When the claim is configured but absent from OIDC userinfo, no
+    fallback to email domain. ``resolve_organization`` leaves the user's
+    organization untouched and the caller is expected to fail closed.
+
+    Opting into the claim is opting into strict org identity — silently
+    falling back to the email domain would attach users to the wrong org.
+    """
+    org = factories.OrganizationFactory(external_id="ministry.gouv.fr")
+    user = factories.UserFactory(email="alice@ministry.gouv.fr", organization=org)
+
+    resolve_organization(user, claims={}, entitlements={})
+
+    user.refresh_from_db()
+    # No new organization was created from the email domain.
+    assert Organization.objects.filter(external_id="ministry.gouv.fr").count() == 1
+    # And the user's existing org is unchanged.
+    assert user.organization_id == org.id
+
+
+@pytest.mark.django_db
+@override_settings(OIDC_USERINFO_ORGANIZATION_CLAIM="siret")
+def test_resolve_org_strict_no_fallback_when_claim_empty_string():
+    """An empty-string claim value is the same as missing — no fallback."""
+    user = factories.UserFactory(email="alice@ministry.gouv.fr")
+    initial_org_id = user.organization_id
+
+    resolve_organization(user, claims={"siret": ""}, entitlements={})
+
+    user.refresh_from_db()
+    assert user.organization_id == initial_org_id
+
+
+@pytest.mark.django_db
 def test_resolve_org_updates_name():
     """Org name is updated from entitlements on subsequent logins."""
     org = factories.OrganizationFactory(external_id="example.com", name="Old Name")

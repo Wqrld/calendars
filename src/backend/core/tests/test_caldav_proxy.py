@@ -33,7 +33,14 @@ class TestCalDAVProxy:
 
     @responses.activate
     def test_proxy_forwards_headers_correctly(self):
-        """Test that proxy forwards X-LS-User headers."""
+        """Test that proxy forwards X-LS-User and does NOT forward
+        X-Forwarded-* headers.
+
+        SabreDAV builds URLs from ``setBaseUri`` (env-driven) and never
+        reads X-Forwarded-* headers, so the proxy deliberately does not
+        set them. This test pins that contract: only X-LS-* should land
+        on the outgoing request, never the X-Forwarded-* family.
+        """
         user = factories.UserFactory(email="test@example.com")
         client = APIClient()
         client.force_login(user)
@@ -56,10 +63,14 @@ class TestCalDAVProxy:
         assert len(responses.calls) == 1
         request = responses.calls[0].request
 
-        # Verify headers were forwarded
+        # The authenticated user identity must be forwarded.
         assert request.headers["X-LS-User"] == user.email
-        assert request.headers["X-Forwarded-Host"] is not None
-        assert request.headers["X-Forwarded-Proto"] == "http"
+
+        # X-Forwarded-* headers must NOT be present — SabreDAV ignores
+        # them and the proxy was simplified to stop sending them.
+        assert "X-Forwarded-For" not in request.headers
+        assert "X-Forwarded-Host" not in request.headers
+        assert "X-Forwarded-Proto" not in request.headers
 
     @responses.activate
     def test_proxy_ignores_client_sent_x_forwarded_user_header(self):

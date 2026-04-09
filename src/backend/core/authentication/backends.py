@@ -18,17 +18,19 @@ logger = logging.getLogger(__name__)
 def _resolve_org_external_id(claims, email=None):
     """Extract the organization external_id from OIDC claims or email domain.
 
-    Prefers ``OIDC_USERINFO_ORGANIZATION_CLAIM`` when configured, but falls
-    back to the email domain if the claim is missing/empty on a particular
-    user. This keeps OIDC providers that issue the org claim only for some
-    accounts (or only on the mail domain attributes — see
-    ``setup_service._resolve_mailbox_org_id``) usable as a login source.
+    When ``OIDC_USERINFO_ORGANIZATION_CLAIM`` is configured, the claim
+    MUST be present in the OIDC userinfo — no fallback. Deployments
+    that opt into the claim want strict org identity, and silently
+    falling back to the email domain would attach users to the wrong
+    org. Returns ``None`` if the claim is missing so the caller can
+    fail closed.
+
+    When the setting is empty, fall back to the email domain so
+    deployments without an org claim still work.
     """
     claim_key = settings.OIDC_USERINFO_ORGANIZATION_CLAIM
     if claim_key:
-        value = claims.get(claim_key)
-        if value:
-            return value
+        return claims.get(claim_key) or None
     email = email or claims.get("email")
     return email.split("@")[-1] if email and "@" in email else None
 

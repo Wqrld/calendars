@@ -185,15 +185,6 @@ class CalDAVProxyView(View):
 
         http = CalDAVHTTPClient()
 
-        # Defense-in-depth: strip all X-LS-* headers from the incoming
-        # request to prevent clients from injecting internal headers.
-        # The proxy unconditionally sets its own X-LS-* values below,
-        # but explicit stripping ensures no stale or malicious headers
-        # survive even if the header-setting code changes.
-        for key in list(request.META.keys()):
-            if key.startswith("HTTP_X_LS_"):
-                del request.META[key]
-
         # Build target URL
         clean_path = path.lstrip("/") if path else ""
         if clean_path:
@@ -218,9 +209,6 @@ class CalDAVProxyView(View):
             headers["X-LS-Channel-Id"] = str(channel.pk)
 
         headers["Content-Type"] = request.content_type or "application/xml"
-        headers["X-Forwarded-For"] = request.META.get("REMOTE_ADDR", "")
-        headers["X-Forwarded-Host"] = request.get_host()
-        headers["X-Forwarded-Proto"] = request.scheme
         # Note: X-LS-User is set by build_base_headers() above and
         # doubles as the audit principal — AuditContextPlugin reads
         # the same header for setCurrentPrincipal(). One header,
@@ -284,7 +272,7 @@ class CalDAVProxyView(View):
                     target_url,
                 )
             if request.method == "PROPFIND":
-                logger.warning(
+                logger.debug(
                     "CalDAV PROPFIND %s -> %s (status=%s, body_len=%d, content_type=%s)",
                     target_url,
                     effective_user.email,

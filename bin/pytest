@@ -2,8 +2,10 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_config.sh"
 
+# Use the dedicated backend-test compose service so tests don't inherit
+# env.d/development/backend.local. The Test settings class is selected
+# via DJANGO_CONFIGURATION=Test set on the service itself.
 _dc_run \
     --name backend-test \
-    -e DJANGO_CONFIGURATION=Test \
-    backend-dev \
+    backend-test \
     pytest "$@"

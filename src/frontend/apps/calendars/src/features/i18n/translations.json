@@ -305,7 +305,7 @@
             "sa": "S",
             "su": "S"
           },
-          "months": {
+          "monthNames": {
             "january": "January",
             "february": "February",
             "march": "March",
@@ -346,7 +346,8 @@
         },
         "onboarding": {
           "title": "Welcome! Create your first calendar",
-          "description": "Choose a sending identity for your calendar. This determines which email address will be used when sending event invitations."
+          "description": "Choose a sending identity for your calendar. This determines which email address will be used when sending event invitations.",
+          "noMailboxesMessage": "You don't have access to any mailboxes on Messages so all invitations will be sent from the system address."
         },
         "editCalendar": {
           "title": "Edit calendar",
@@ -1186,7 +1187,7 @@
             "sa": "S",
             "su": "D"
           },
-          "months": {
+          "monthNames": {
             "january": "Janvier",
             "february": "Février",
             "march": "Mars",
@@ -1227,7 +1228,8 @@
         },
         "onboarding": {
           "title": "Bienvenue ! Créez votre premier calendrier",
-          "description": "Choisissez une identité d'envoi pour votre calendrier. Elle détermine l'adresse email utilisée pour envoyer les invitations."
+          "description": "Choisissez une identité d'envoi pour votre calendrier. Elle détermine l'adresse email utilisée pour envoyer les invitations.",
+          "noMailboxesMessage": "Vous n'avez accès à aucune boîte mail sur Messages, donc toutes les invitations seront envoyées depuis l'adresse système."
         },
         "editCalendar": {
           "title": "Modifier le calendrier",
@@ -1809,7 +1811,7 @@
             "sa": "Z",
             "su": "Z"
           },
-          "months": {
+          "monthNames": {
             "january": "Januari",
             "february": "Februari",
             "march": "Maart",
@@ -1850,7 +1852,8 @@
         },
         "onboarding": {
           "title": "Welkom! Maak je eerste kalender aan",
-          "description": "Kies een verzendidentiteit voor je kalender. Dit bepaalt welk e-mailadres wordt gebruikt voor het verzenden van uitnodigingen."
+          "description": "Kies een verzendidentiteit voor je kalender. Dit bepaalt welk e-mailadres wordt gebruikt voor het verzenden van uitnodigingen.",
+          "noMailboxesMessage": "Je hebt geen toegang tot mailboxen op Messages, dus alle uitnodigingen worden verzonden vanaf het systeemadres."
         },
         "editCalendar": {
           "title": "Kalender bewerken",

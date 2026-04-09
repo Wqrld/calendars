@@ -178,19 +178,41 @@ def test_api_users_list_query_email_partial_matching():
     client = APIClient()
     client.force_login(user)
 
+    # NOTE: every user below sets ``full_name`` explicitly. The user
+    # search matches both ``email`` and ``full_name`` (icontains), so a
+    # Faker-generated name like ``Alicia Whatever`` would silently make
+    # this test flaky by matching the ``alicia`` query against a name
+    # field instead of an email field. Use placeholder names that share
+    # no substrings with the search queries below.
     user1 = factories.UserFactory(
-        email="alice.johnson@example.gouv.fr", organization=org
+        email="alice.johnson@example.gouv.fr",
+        full_name="Person One",
+        organization=org,
     )
     user2 = factories.UserFactory(
-        email="alice.johnnson@example.gouv.fr", organization=org
+        email="alice.johnnson@example.gouv.fr",
+        full_name="Person Two",
+        organization=org,
     )
-    factories.UserFactory(email="alice.kohlson@example.gouv.fr", organization=org)
+    factories.UserFactory(
+        email="alice.kohlson@example.gouv.fr",
+        full_name="Person Three",
+        organization=org,
+    )
     user4 = factories.UserFactory(
-        email="alicia.johnnson@example.gouv.fr", organization=org
+        email="alicia.johnnson@example.gouv.fr",
+        full_name="Person Four",
+        organization=org,
     )
     # Different org user should not appear
-    other_org_user = factories.UserFactory(email="alice.johnnson@example.gov.uk")
-    factories.UserFactory(email="alice.thomson@example.gouv.fr", organization=org)
+    other_org_user = factories.UserFactory(
+        email="alice.johnnson@example.gov.uk", full_name="Person Five"
+    )
+    factories.UserFactory(
+        email="alice.thomson@example.gouv.fr",
+        full_name="Person Six",
+        organization=org,
+    )
 
     # Partial match on "alice.john" returns alice.johnson and alice.johnnson
     response = client.get("/api/v1.0/users/?q=alice.john")

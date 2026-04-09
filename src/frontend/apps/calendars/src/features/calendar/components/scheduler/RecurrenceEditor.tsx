@@ -1,4 +1,9 @@
-import { Select, Input } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Alert,
+  Input,
+  Select,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
 import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { IcsRecurrenceRule, IcsWeekDay } from "ts-ics";
@@ -55,6 +60,21 @@ interface RecurrenceEditorProps {
   onChange: (rule: IcsRecurrenceRule | undefined) => void;
 }
 
+// Yearly recurrence only — when the user picks a specific month + day,
+// warn if that combination is invalid or only valid in leap years.
+// Monthly recurrence does NOT show warnings: the same day-of-month is
+// applied to every month and the user gets to choose how the calendar
+// handles short months at the iCal level.
+//
+// TODO: restore proper monthly warnings. When the user picks a
+// day-of-month >= 29 with MONTHLY recurrence, we should warn that some
+// months will be skipped (day=29 → non-leap Februaries, day=30 → all
+// Februaries, day=31 → April/June/Sep/Nov). The original yearly-context
+// translation strings (``februaryMax``, ``leapYear``, ``monthMax30``)
+// don't quite fit the monthly framing — they read like "this month"
+// references a single month — so doing this properly requires a new
+// set of monthly-specific copy keys, not just reusing the existing
+// ones.
 function getDateWarning(
   t: (key: string) => string,
   day: number,
@@ -134,7 +154,7 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
     () =>
       MONTHS.map((month) => ({
         value: String(month.value),
-        label: t(`calendar.recurrence.months.${month.key}`),
+        label: t(`calendar.recurrence.monthNames.${month.key}`),
       })),
     [t],
   );
@@ -253,12 +273,9 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
   const endType = getEndType(value);
 
   const monthDay = getMonthDay();
-  const selectedMonth =
-    value?.frequency === "YEARLY" ? parseInt(getMonth()) : undefined;
   const dateWarning =
-    isCustom &&
-    (value?.frequency === "MONTHLY" || value?.frequency === "YEARLY")
-      ? getDateWarning(t, monthDay, selectedMonth)
+    isCustom && value?.frequency === "YEARLY"
+      ? getDateWarning(t, monthDay, parseInt(getMonth()))
       : null;
 
 
@@ -277,9 +294,13 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
       />
 
       {showAdvancedWarning && (
-        <div className="recurrence-editor__warning">
+        <Alert
+          className="app__alert--small"
+          type={VariantType.WARNING}
+          icon={<span className="material-icons">warning</span>}
+        >
           {t("calendar.recurrence.advancedPropertiesWarning")}
-        </div>
+        </Alert>
       )}
 
       {isCustom && (
@@ -358,11 +379,6 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
                   }}
                 />
               </div>
-              {dateWarning && (
-                <div className="recurrence-editor__warning">
-                  {dateWarning}
-                </div>
-              )}
             </div>
           )}
 
@@ -397,9 +413,13 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
                 />
               </div>
               {dateWarning && (
-                <div className="recurrence-editor__warning">
+                <Alert
+                  className="app__alert--small"
+                  type={VariantType.WARNING}
+                  icon={<span className="material-icons">warning</span>}
+                >
                   {dateWarning}
-                </div>
+                </Alert>
               )}
             </div>
           )}

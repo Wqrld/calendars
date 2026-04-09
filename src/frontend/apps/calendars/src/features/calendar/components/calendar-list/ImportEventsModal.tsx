@@ -5,7 +5,13 @@
 
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Modal, ModalSize } from "@gouvfr-lasuite/cunningham-react";
+import {
+  Alert,
+  Button,
+  Modal,
+  ModalSize,
+  VariantType,
+} from "@gouvfr-lasuite/cunningham-react";
 import { Spinner } from "@gouvfr-lasuite/ui-kit";
 
 import { useImportEvents } from "../../hooks/useCalendars";
@@ -125,9 +131,13 @@ export const ImportEventsModal = ({
         )}
 
         {importMutation.isError && !hasResult && (
-          <div className="import-events-modal__error">
+          <Alert
+            className="app__alert--small"
+            type={VariantType.ERROR}
+            icon={<span className="material-icons">error</span>}
+          >
             {t("calendar.importEvents.error")}
-          </div>
+          </Alert>
         )}
 
         {hasResult && (

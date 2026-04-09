@@ -75,6 +75,12 @@ class SetupView(APIView):
             )
             return Response(result, status=status.HTTP_201_CREATED)
         except SetupServiceError as exc:
+            logger.warning(
+                "Setup rejected for user %s (mailbox=%s): %s",
+                request.user.pk,
+                mailbox_email,
+                exc,
+            )
             return Response(
                 {"error": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
