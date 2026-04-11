@@ -56,17 +56,17 @@ export const EventModal = ({
 
   const { resources: availableResources } = useResourcePrincipals();
 
-  // For mailbox calendars, use the mailbox email as ORGANIZER. The
-  // value comes from the parsed CS:invite payload on the calendar
-  // object — no extra context lookup, no hydration race.
-  const mailboxEmail = calendarUrl
+  // Initial organizer from the prop-level calendarUrl — used only
+  // for the form reset effect (useEventForm) so that switching the
+  // dropdown doesn't wipe the form.
+  const initialMailboxEmail = calendarUrl
     ? calendars.find((c) => c.url === calendarUrl)?.mailboxEmail
     : undefined;
 
-  const organizer: IcsOrganizer | undefined =
+  const initialOrganizer: IcsOrganizer | undefined =
     event?.organizer ||
-    (mailboxEmail
-      ? { email: mailboxEmail, name: mailboxEmail.split("@")[0] }
+    (initialMailboxEmail
+      ? { email: initialMailboxEmail, name: initialMailboxEmail.split("@")[0] }
       : user?.email
         ? { email: user.email, name: user.full_name || user.email.split("@")[0] }
         : undefined);
@@ -75,10 +75,32 @@ export const EventModal = ({
     event,
     calendarUrl,
     adapter,
-    organizer,
+    organizer: initialOrganizer,
     mode,
     availableResources,
   });
+
+  // Organizer that tracks the *currently selected* calendar in the
+  // dropdown — this is what gets written into the ICS on save and
+  // shown in the attendees section.  When the user switches from a
+  // personal calendar to a mailbox calendar the ORGANIZER must
+  // become the mailbox email so SabreDAV sets X-LS-Is-Mailbox and
+  // Django routes the invitation through the Messages API.
+  const organizer: IcsOrganizer | undefined = useMemo(() => {
+    if (event?.organizer) return event.organizer;
+    const mbxEmail = form.selectedCalendarUrl
+      ? calendars.find((c) => c.url === form.selectedCalendarUrl)
+          ?.mailboxEmail
+      : undefined;
+    if (mbxEmail) return { email: mbxEmail, name: mbxEmail.split("@")[0] };
+    if (user?.email) {
+      return {
+        email: user.email,
+        name: user.full_name || user.email.split("@")[0],
+      };
+    }
+    return undefined;
+  }, [event?.organizer, form.selectedCalendarUrl, calendars, user]);
 
   // Defensive: if the form's selected calendar URL is empty or doesn't
   // match any entry in the dropdown's options (stale state, race
@@ -121,6 +143,15 @@ export const EventModal = ({
     setIsLoading(true);
     try {
       const icsEvent = form.toIcsEvent();
+
+      // Override organizer with the one matching the currently
+      // selected calendar (may differ from the initial prop).
+      if (organizer) {
+        icsEvent.organizer = {
+          email: organizer.email,
+          name: organizer.name,
+        };
+      }
 
       await onSave(
         icsEvent,

@@ -3,6 +3,7 @@
 # pylint: disable=missing-function-docstring,protected-access
 
 import re
+from unittest.mock import MagicMock, patch
 
 from django.template.loader import render_to_string
 
@@ -353,3 +354,137 @@ class TestEmailTemplateVisioUrl:
         context = self._build_context(event)
         txt = render_to_string("emails/calendar_invitation.txt", context)
         assert "Visio" not in txt
+
+
+# ICS template for mailbox invitation tests
+ICS_MAILBOX_INVITE = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+UID:mailbox-invite-test-1
+DTSTART:20260310T100000Z
+DTEND:20260310T110000Z
+SUMMARY:Mailbox Team Meeting
+ORGANIZER;CN=Team Mailbox:mailto:team@company.com
+ATTENDEE;CN=External;RSVP=TRUE:mailto:external@other.com
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR"""
+
+
+@pytest.mark.django_db
+class TestMailboxInvitationRouting:
+    """When is_mailbox=True, invitations MUST be sent through the
+    Messages API (so the email comes from the mailbox address).
+    Falling back to SMTP would send from the system address — the
+    exact production bug this test guards against.
+    """
+
+    @pytest.fixture()
+    def service(self):
+        return CalendarInvitationService()
+
+    @pytest.fixture()
+    def _messages_settings(self, settings):
+        settings.FEATURE_MESSAGES_INTEGRATION = True
+        settings.MESSAGES_API_URL = "https://messages.test"
+        settings.MESSAGES_API_KEY = "test-key"
+        settings.MESSAGES_CHANNEL_ID = "test-channel"
+
+    @pytest.mark.usefixtures("_messages_settings")
+    def test_mailbox_invitation_routes_via_messages_api(self, service):
+        """send_invitation(is_mailbox=True) must call _send_via_messages,
+        NOT _send_email. If the email is sent via SMTP the 'from' address
+        will be the system address instead of the mailbox identity."""
+        mock_messages = MagicMock()
+        mock_messages.get_mailbox_by_email.return_value = {
+            "id": "mbx-123",
+            "email": "team@company.com",
+        }
+        mock_messages.submit_raw_email.return_value = True
+
+        with (
+            patch(
+                "core.services.calendar_invitation_service"
+                ".CalendarInvitationService._send_email",
+            ) as mock_send_email,
+            patch(
+                "core.services.messages_service.MessagesService.__init__",
+                return_value=None,
+            ),
+            patch(
+                "core.services.messages_service.MessagesService.get_mailbox_by_email",
+                mock_messages.get_mailbox_by_email,
+            ),
+            patch(
+                "core.services.messages_service.MessagesService.submit_raw_email",
+                mock_messages.submit_raw_email,
+            ),
+        ):
+            result = service.send_invitation(
+                sender_email="team@company.com",
+                recipient_email="external@other.com",
+                method="REQUEST",
+                icalendar_data=ICS_MAILBOX_INVITE,
+                is_mailbox=True,
+            )
+
+        assert result is True, "Invitation should succeed via Messages API"
+        mock_messages.get_mailbox_by_email.assert_called_once_with("team@company.com")
+        mock_messages.submit_raw_email.assert_called_once()
+        mock_send_email.assert_not_called()
+
+    @pytest.mark.usefixtures("_messages_settings")
+    def test_non_mailbox_invitation_routes_via_smtp(self, service):
+        """send_invitation(is_mailbox=False) must call _send_email,
+        NOT _send_via_messages."""
+        with (
+            patch(
+                "core.services.calendar_invitation_service"
+                ".CalendarInvitationService._send_email",
+                return_value=True,
+            ) as mock_send_email,
+            patch(
+                "core.services.calendar_invitation_service"
+                ".CalendarInvitationService._send_via_messages",
+            ) as mock_send_messages,
+        ):
+            result = service.send_invitation(
+                sender_email="alice@example.com",
+                recipient_email="bob@example.com",
+                method="REQUEST",
+                icalendar_data=ICS_WITH_URL,
+                is_mailbox=False,
+            )
+
+        assert result is True
+        mock_send_email.assert_called_once()
+        mock_send_messages.assert_not_called()
+
+    @pytest.mark.usefixtures("_messages_settings")
+    def test_mailbox_invitation_no_smtp_fallback_on_messages_failure(self, service):
+        """If _send_via_messages fails, the invitation must NOT fall
+        back to SMTP. Sending a mailbox invitation from the system
+        address is worse than not sending it at all — it confuses
+        recipients and bypasses the mailbox identity."""
+        with (
+            patch(
+                "core.services.calendar_invitation_service"
+                ".CalendarInvitationService._send_email",
+            ) as mock_send_email,
+            patch(
+                "core.services.calendar_invitation_service"
+                ".CalendarInvitationService._send_via_messages",
+                return_value=False,
+            ),
+        ):
+            result = service.send_invitation(
+                sender_email="team@company.com",
+                recipient_email="external@other.com",
+                method="REQUEST",
+                icalendar_data=ICS_MAILBOX_INVITE,
+                is_mailbox=True,
+            )
+
+        assert result is False, "Invitation should fail when Messages API fails"
+        mock_send_email.assert_not_called()

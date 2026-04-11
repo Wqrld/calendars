@@ -403,19 +403,21 @@ class CalDAVSchedulingCallbackView(View):
                 content_type="text/plain",
             )
 
-        logger.info(
-            "Processing CalDAV scheduling message: %s -> %s (method: %s)",
-            sender,
-            recipient,
-            method,
-        )
-
         # SabreDAV's HttpCallbackIMipPlugin checks the sender's principal type
         # and passes it via header — no need for an extra API call here.
         # Security: this endpoint is gated by X-LS-Api-Key (CALDAV_INBOUND_API_KEY),
         # so the header cannot be spoofed by external callers.
         is_mailbox = request.headers.get("X-LS-Is-Mailbox") == "true"
         org_id = request.headers.get("X-LS-Org-Id", "")
+        via = "messages" if is_mailbox else "smtp"
+
+        logger.info(
+            "Processing CalDAV scheduling %s: %s -> %s (via %s)",
+            method,
+            sender,
+            recipient,
+            via,
+        )
 
         # Send the invitation/notification email
         try:
@@ -430,10 +432,11 @@ class CalDAVSchedulingCallbackView(View):
 
             if success:
                 logger.info(
-                    "Successfully sent calendar %s email: %s -> %s",
+                    "Sent calendar %s: %s -> %s (via %s)",
                     method,
                     sender,
                     recipient,
+                    via,
                 )
                 return HttpResponse(
                     status=200,
@@ -442,10 +445,11 @@ class CalDAVSchedulingCallbackView(View):
                 )
 
             logger.error(
-                "Failed to send calendar %s email: %s -> %s",
+                "Failed to send calendar %s: %s -> %s (via %s)",
                 method,
                 sender,
                 recipient,
+                via,
             )
             return HttpResponse(
                 status=500,

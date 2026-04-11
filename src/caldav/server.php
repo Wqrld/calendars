@@ -242,7 +242,6 @@ if (!$callbackBaseUrl) {
     exit(1);
 }
 $callbackUrl = rtrim($callbackBaseUrl, '/') . '/api/v1.0/caldav-scheduling-callback/';
-error_log("[sabre/dav] Scheduling callback URL: {$callbackUrl}");
 $imipPlugin = new HttpCallbackIMipPlugin($callbackApiKey, $pdo, $callbackUrl);
 $server->addPlugin($imipPlugin);
 
