@@ -21,6 +21,7 @@ import { useAuth } from "@/features/auth/Auth";
 import { useConfig } from "@/features/config/ConfigProvider";
 import { useMailboxContext } from "@/features/mailbox/MailboxContext";
 
+import { FeatureFlag, useFeatureFlag } from "@/hooks/useFeatureFlag";
 import { DEFAULT_COLORS } from "./constants";
 import type { CalendarModalProps } from "./types";
 
@@ -47,6 +48,7 @@ export const CalendarModal = ({
   const [error, setError] = useState<string | null>(null);
 
   const messagesEnabled = !!config?.FEATURE_MESSAGES_INTEGRATION;
+  const availabilitiesEnabled = useFeatureFlag(FeatureFlag.ADMIN_AVAILABILITIES);
 
   // The modal can only create mailbox-backed calendars from mailboxes where
   // the user has sender/admin role; other mailboxes must be filtered out from
@@ -282,7 +284,7 @@ export const CalendarModal = ({
           </div>
         </div>
 
-        {mode === "edit" && (
+        {mode === "edit" && availabilitiesEnabled && (
           <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 0", cursor: "pointer" }}>
             <input
               type="checkbox"
