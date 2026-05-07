@@ -1,8 +1,10 @@
 """Tests for CalDAV proxy view."""
 
-# pylint: disable=no-member
+# pylint: disable=no-member,too-many-lines
 
+import base64
 import json
+from unittest import mock
 from xml.etree import ElementTree as ET
 
 from django.conf import settings
@@ -17,7 +19,11 @@ from rest_framework.status import (
 )
 from rest_framework.test import APIClient
 
+from core import enums as core_enums
 from core import factories
+from core import models as core_models
+from core.enums import ChannelScope
+from core.models import uuid_to_urlsafe
 from core.services.caldav_service import CalDAVHTTPClient, validate_caldav_proxy_path
 
 
@@ -315,6 +321,196 @@ class TestCalDAVProxy:
         assert response.status_code == HTTP_200_OK
         assert "Access-Control-Allow-Methods" in response
         assert "PROPFIND" in response["Access-Control-Allow-Methods"]
+
+    @pytest.mark.parametrize(
+        "method",
+        [
+            "LOCK",
+            "UNLOCK",
+            "COPY",
+            "ACL",
+            "SEARCH",
+            "PATCH",
+            "BIND",
+            "REBIND",
+            "UNBIND",
+            "ORDERPATCH",
+        ],
+    )
+    def test_proxy_rejects_unknown_methods(self, method):
+        """Methods outside the allowlist are rejected with 405 before the
+        request ever reaches SabreDAV.
+
+        This is defense in depth: SabreDAV may add plugins (LOCK, ACL
+        writes, etc.) over time, but the proxy must opt them in
+        explicitly. A 405 here also exposes ``Allow`` so clients can
+        discover the supported set.
+        """
+        user = factories.UserFactory(email="test@example.com")
+        client = APIClient()
+        client.force_login(user)
+
+        response = client.generic(method, "/caldav/calendars/users/test@example.com/")
+
+        assert response.status_code == 405
+        # Allow header advertises the canonical proxy method set.
+        allow = response.get("Allow", "")
+        for expected in ("MOVE", "PROPFIND", "REPORT", "MKCALENDAR"):
+            assert expected in allow
+
+    @responses.activate
+    def test_proxy_forwards_move_with_destination_rewrite(self):
+        """MOVE forwards Destination/Overwrite to upstream, with the
+        public URL in the Destination header rewritten to point at the
+        upstream CalDAV server (so SabreDAV recognizes the destination
+        as on its own host)."""
+        user = factories.UserFactory(email="test@example.com")
+        client = APIClient()
+        client.force_login(user)
+
+        caldav_url = settings.CALDAV_URL
+        source_path = "/caldav/calendars/users/test@example.com/cal-a/event-uid.ics"
+        upstream_source = f"{caldav_url}{source_path}"
+        upstream_dest = (
+            f"{caldav_url}/caldav/calendars/users/test@example.com/cal-b/event-uid.ics"
+        )
+
+        responses.add(
+            responses.Response(
+                method="MOVE",
+                url=upstream_source,
+                status=201,
+                body="",
+            )
+        )
+
+        # Client sends an absolute URL pointing at the public proxy host;
+        # the proxy must rewrite it to the upstream URL before forwarding.
+        public_destination = (
+            "http://example-public-host/caldav/calendars/users/"
+            "test@example.com/cal-b/event-uid.ics"
+        )
+        response = client.generic(
+            "MOVE",
+            source_path,
+            HTTP_DESTINATION=public_destination,
+            HTTP_OVERWRITE="F",
+        )
+
+        assert response.status_code == 201
+        assert len(responses.calls) == 1
+        forwarded = responses.calls[0].request
+        assert forwarded.headers["Destination"] == upstream_dest
+        assert forwarded.headers["Overwrite"] == "F"
+
+    def test_proxy_rejects_move_with_invalid_destination(self):
+        """A Destination pointing at /internal-api/ or with traversal
+        must be rejected before forwarding upstream."""
+        user = factories.UserFactory(email="test@example.com")
+        client = APIClient()
+        client.force_login(user)
+
+        source_path = "/caldav/calendars/users/test@example.com/cal-a/event-uid.ics"
+
+        response = client.generic(
+            "MOVE",
+            source_path,
+            HTTP_DESTINATION="http://example/caldav/internal-api/sync_acls",
+        )
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+        response = client.generic(
+            "MOVE",
+            source_path,
+            HTTP_DESTINATION="http://example/caldav/calendars/../etc/passwd",
+        )
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+        # Double-encoded traversal: %252e%252e -> %2e%2e -> ..
+        response = client.generic(
+            "MOVE",
+            source_path,
+            HTTP_DESTINATION=("http://example/caldav/calendars/%252e%252e/etc/passwd"),
+        )
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+    def test_proxy_rejects_move_with_empty_destination(self):
+        """A MOVE whose Destination resolves to the calendar root (no
+        path beyond ``/caldav/``) must be rejected with 400 — the
+        current prefix allowlist treats an empty path as valid (it's
+        used for the root PROPFIND), so without an explicit empty-path
+        check a caller could smuggle a relocation to the upstream root.
+        """
+        user = factories.UserFactory(email="test@example.com")
+        client = APIClient()
+        client.force_login(user)
+
+        source_path = "/caldav/calendars/users/test@example.com/cal-a/event-uid.ics"
+
+        # Destination URL with the proxy prefix but nothing beyond.
+        response = client.generic(
+            "MOVE", source_path, HTTP_DESTINATION="http://example/caldav/"
+        )
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+        # Destination URL that resolves to the absolute server root.
+        response = client.generic(
+            "MOVE", source_path, HTTP_DESTINATION="http://example/"
+        )
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+    def test_proxy_rejects_move_destination_outside_channel_scope(self):
+        """When MOVE is allowed for a channel scope, the destination
+        path must be subject to the same scope check as the source.
+        Without this, a CALENDAR-scoped channel could MOVE an event
+        out of its scoped calendar into another calendar of the same
+        user — bypassing the scope.
+
+        MOVE isn't in any production channel scope today, so this test
+        patches it in to exercise the destination-scope code path
+        directly. If a future PR adds MOVE to a real scope, this test
+        keeps the destination check honest.
+        """
+        user = factories.UserFactory(email="test@example.com")
+        channel = factories.ChannelFactory(
+            user=user,
+            type="caldav",
+            scope_level="calendar",
+            caldav_path=f"/calendars/users/{user.email}/cal-a/",
+            settings={"scopes": ["events:read", "events:write"]},
+            is_active=True,
+        )
+        token = channel.encrypted_settings["token"]
+        chan_id = uuid_to_urlsafe(channel.pk)
+        creds = base64.b64encode(f"{user.email}:{chan_id}{token}".encode()).decode()
+
+        client = APIClient()
+        source_path = f"/caldav/calendars/users/{user.email}/cal-a/event.ics"
+        out_of_scope_dest = (
+            f"http://example/caldav/calendars/users/{user.email}/cal-b/event.ics"
+        )
+
+        # Patch MOVE into the EVENTS_WRITE object scope so we reach the
+        # destination check (otherwise we'd 403 at the method gate).
+        # The patch target is `core.models` because that module captured
+        # its own binding to the dict at import time.
+        patched_methods = dict(core_enums.CHANNEL_SCOPE_OBJECT_METHODS)
+        patched_methods[ChannelScope.EVENTS_WRITE] = frozenset(
+            patched_methods[ChannelScope.EVENTS_WRITE] | {"MOVE"}
+        )
+
+        with mock.patch.object(
+            core_models, "CHANNEL_SCOPE_OBJECT_METHODS", patched_methods
+        ):
+            response = client.generic(
+                "MOVE",
+                source_path,
+                HTTP_DESTINATION=out_of_scope_dest,
+                HTTP_AUTHORIZATION=f"Basic {creds}",
+            )
+
+        assert response.status_code == 403
+        assert b"Forbidden destination" in response.content
 
     def test_proxy_rejects_path_traversal(self):
         """Test that proxy rejects paths with directory traversal."""
@@ -662,6 +858,47 @@ class TestValidateCaldavProxyPath:
     def test_encoded_null_byte_is_rejected(self):
         """URL-encoded null byte should be rejected."""
         assert validate_caldav_proxy_path("calendars/user%00/") is False
+
+    def test_double_encoded_traversal_is_rejected(self):
+        """Double URL-encoded traversal (e.g. %252e%252e -> %2e%2e ->
+        ..) must also be rejected.
+
+        The validator unquotes until a fixed point is reached so an
+        attacker cannot smuggle a `..` past the literal-substring check
+        by stacking encoding layers.
+        """
+        assert validate_caldav_proxy_path("calendars/%252e%252e/etc/passwd") is False
+
+    def test_triple_encoded_traversal_is_rejected(self):
+        """Triple URL-encoded traversal should also be rejected."""
+        assert (
+            validate_caldav_proxy_path("calendars/%25252e%25252e/etc/passwd") is False
+        )
+
+    @pytest.mark.parametrize(
+        "raw,description",
+        [
+            ("calendars/users/me/cal/\rfoo.ics", "CR"),
+            ("calendars/users/me/cal/\nfoo.ics", "LF"),
+            ("calendars/users/me/cal/\r\nX-Header: pwn", "CRLF header injection"),
+            ("calendars/users/me/cal/\tfoo.ics", "tab"),
+            ("calendars/users/me/cal/foo\x7f.ics", "DEL (0x7F)"),
+            ("calendars/users/me/cal/foo\x01.ics", "SOH (0x01)"),
+            ("calendars/users/me/cal/foo%0A.ics", "URL-encoded LF"),
+            ("calendars/users/me/cal/foo%0d.ics", "URL-encoded CR (lowercase)"),
+        ],
+    )
+    def test_control_characters_are_rejected(self, raw, description):
+        """ASCII control bytes (CR/LF/tab/DEL/etc., raw or %-encoded) are
+        rejected by the validator itself rather than relying on
+        downstream libraries (urllib3 raises on CRLF in headers, but the
+        validator is the documented gate). Also defends the debug logger
+        against newline-injected log lines if a malformed path ever
+        reached it before forwarding.
+        """
+        assert validate_caldav_proxy_path(raw) is False, (
+            f"Expected control char ({description}) to be rejected"
+        )
 
 
 # ---------------------------------------------------------------------------
