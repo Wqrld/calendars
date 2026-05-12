@@ -91,11 +91,21 @@ export class CalDavService {
       // Fast path: skip tsdav discovery (.well-known redirect + two PROPFINDs)
       // when we know the user's email. SabreDAV exposes principals and
       // calendar homes at fixed paths (see src/caldav/server.php).
+      //
+      // The path segment encoding must match what SabreDAV emits in its
+      // PROPFIND hrefs — otherwise the hardcoded homeUrl won't be a
+      // string-prefix of the calendar URLs we later receive, and the
+      // owned-vs-shared bucket logic in CalendarContext breaks. SabreDAV's
+      // URLUtil::encodePath leaves RFC 3986 sub-delims and `@` literal,
+      // whereas encodeURIComponent escapes `@` (→ %40) and `+` (→ %2B),
+      // so we put those two back.
       if (credentials.userEmail) {
         const serverUrl = credentials.serverUrl.endsWith('/')
           ? credentials.serverUrl
           : `${credentials.serverUrl}/`
         const encodedEmail = encodeURIComponent(credentials.userEmail)
+          .replace(/%40/g, '@')
+          .replace(/%2B/g, '+')
         this._account = {
           serverUrl,
           rootUrl: serverUrl,
