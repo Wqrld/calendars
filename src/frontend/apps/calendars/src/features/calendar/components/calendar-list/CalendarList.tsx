@@ -8,6 +8,10 @@ import { useTranslation } from "react-i18next";
 
 import { useCalendarContext } from "../../contexts";
 import { setupCalendar } from "@/features/mailbox/api";
+import {
+  addToast,
+  ToasterItem,
+} from "@/features/ui/components/toaster/Toaster";
 
 import { CalendarModal } from "./CalendarModal";
 import { CalendarShareModal } from "./CalendarShareModal";
@@ -30,6 +34,7 @@ export const CalendarList = () => {
     createCalendar,
     updateCalendar,
     deleteCalendar,
+    moveCalendar,
     refreshCalendars,
     calendarRef,
     isLoading: isCalendarLoading,
@@ -129,6 +134,39 @@ export const CalendarList = () => {
     }
   }, [calendarRef]);
 
+  const handleMoveUp = useCallback(
+    (calendar: CalDavCalendar) => {
+      // moveCalendar resolves with `{success: false, error}` when any
+      // PROPPATCH fails — surface that to the user instead of swallowing
+      // it (and instead of leaving the visible state quietly stale).
+      void moveCalendar(calendar.url, "up").then((result) => {
+        if (!result.success) {
+          addToast(
+            <ToasterItem type="error" closeButton>
+              {result.error || t("calendar.error.fetchCalendars")}
+            </ToasterItem>,
+          );
+        }
+      });
+    },
+    [moveCalendar, t],
+  );
+
+  const handleMoveDown = useCallback(
+    (calendar: CalDavCalendar) => {
+      void moveCalendar(calendar.url, "down").then((result) => {
+        if (!result.success) {
+          addToast(
+            <ToasterItem type="error" closeButton>
+              {result.error || t("calendar.error.fetchCalendars")}
+            </ToasterItem>,
+          );
+        }
+      });
+    },
+    [moveCalendar, t],
+  );
+
   return (
     <>
       <div className="calendar-list">
@@ -162,7 +200,7 @@ export const CalendarList = () => {
           </div>
           {isMyCalendarsExpanded && (
             <div className="calendar-list__items">
-              {ownedCalendars.map((calendar) => (
+              {ownedCalendars.map((calendar, idx) => (
                 <CalendarListItem
                   key={calendar.url}
                   calendar={calendar}
@@ -176,6 +214,10 @@ export const CalendarList = () => {
                   onShare={handleOpenShareModal}
                   onImport={handleOpenImportModal}
                   onSubscription={handleOpenSubscriptionModal}
+                  onMoveUp={idx > 0 ? handleMoveUp : undefined}
+                  onMoveDown={
+                    idx < ownedCalendars.length - 1 ? handleMoveDown : undefined
+                  }
                   onCloseMenu={handleCloseMenu}
                 />
               ))}
@@ -207,7 +249,7 @@ export const CalendarList = () => {
             </div>
             {isSharedCalendarsExpanded && (
               <div className="calendar-list__items">
-                {sharedCalendars.map((calendar) => (
+                {sharedCalendars.map((calendar, idx) => (
                   <CalendarListItem
                     key={calendar.url}
                     calendar={calendar}
@@ -220,6 +262,12 @@ export const CalendarList = () => {
                     onDelete={handleOpenDeleteModal}
                     onImport={handleOpenImportModal}
                     onSubscription={handleOpenSubscriptionModal}
+                    onMoveUp={idx > 0 ? handleMoveUp : undefined}
+                    onMoveDown={
+                      idx < sharedCalendars.length - 1
+                        ? handleMoveDown
+                        : undefined
+                    }
                     onCloseMenu={handleCloseMenu}
                   />
                 ))}

@@ -18,6 +18,7 @@ import {
   buildSyncCollectionXml,
   buildPrincipalSearchXml,
   parseCalendarComponents,
+  parseCalendarOrder,
   parseDavErrorMessage,
   parseShareStatus,
   getCalendarUrlFromEventUrl,
@@ -393,6 +394,50 @@ describe('caldav-helpers', () => {
         }
         const result = parseCalendarComponents(input)
         expect(result).toEqual(['VEVENT'])
+      })
+    })
+
+    describe('parseCalendarOrder', () => {
+      // tsdav's xml-js parser auto-coerces pure-digit element text to a
+      // JS number — the actual bug that broke calendar reordering once.
+      it('returns a finite number unchanged', () => {
+        expect(parseCalendarOrder(0)).toBe(0)
+        expect(parseCalendarOrder(42)).toBe(42)
+        expect(parseCalendarOrder(-1)).toBe(-1)
+      })
+
+      it('parses an integer-shaped string', () => {
+        expect(parseCalendarOrder('0')).toBe(0)
+        expect(parseCalendarOrder('100')).toBe(100)
+        expect(parseCalendarOrder('-3')).toBe(-3)
+        expect(parseCalendarOrder('+5')).toBe(5)
+        expect(parseCalendarOrder('  42  ')).toBe(42)
+      })
+
+      it('rejects strings with trailing junk', () => {
+        // Number.parseInt would happily eat the prefix and return 10;
+        // the full-match guard prevents that.
+        expect(parseCalendarOrder('10abc')).toBeUndefined()
+        expect(parseCalendarOrder('1.5')).toBeUndefined()
+        expect(parseCalendarOrder('1 2')).toBeUndefined()
+      })
+
+      it('returns undefined for missing / nullish / wrong-typed input', () => {
+        expect(parseCalendarOrder(undefined)).toBeUndefined()
+        expect(parseCalendarOrder(null)).toBeUndefined()
+        expect(parseCalendarOrder({})).toBeUndefined()
+        expect(parseCalendarOrder([])).toBeUndefined()
+      })
+
+      it('returns undefined for non-finite numbers', () => {
+        expect(parseCalendarOrder(Number.NaN)).toBeUndefined()
+        expect(parseCalendarOrder(Number.POSITIVE_INFINITY)).toBeUndefined()
+        expect(parseCalendarOrder(Number.NEGATIVE_INFINITY)).toBeUndefined()
+      })
+
+      it('returns undefined for non-numeric strings', () => {
+        expect(parseCalendarOrder('')).toBeUndefined()
+        expect(parseCalendarOrder('abc')).toBeUndefined()
       })
     })
 

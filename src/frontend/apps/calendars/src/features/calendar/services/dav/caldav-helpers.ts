@@ -59,6 +59,12 @@ export type CalendarProps = {
   displayName?: string
   description?: string
   color?: string
+  /**
+   * `{http://apple.com/ns/ical/}calendar-order`. Integer used to manually
+   * sort calendars in the sidebar; stored as a dead property by Sabre's
+   * PropertyStorage.
+   */
+  order?: number
   components?: string[]
   /** schedule-calendar-transp: 'opaque' (counts as busy) or 'transparent' */
   scheduleTransp?: 'opaque' | 'transparent'
@@ -76,6 +82,9 @@ export function buildCalendarPropsXml(props: CalendarProps): string[] {
   }
   if (props.color !== undefined && props.color !== null && typeof props.color === 'string') {
     elements.push(xmlProp('A', 'calendar-color', props.color))
+  }
+  if (props.order !== undefined && props.order !== null && typeof props.order === 'number') {
+    elements.push(xmlProp('A', 'calendar-order', String(props.order)))
   }
   if (props.components && props.components.length > 0) {
     const comps = props.components.map((c) => `<C:comp name="${escapeXml(c)}"/>`).join('')
@@ -394,6 +403,7 @@ export const CALENDAR_PROPS = {
   [`${DAVNamespaceShort.CALDAV}:calendar-timezone`]: {},
   [`${DAVNamespaceShort.DAV}:displayname`]: {},
   [`${DAVNamespaceShort.CALDAV_APPLE}:calendar-color`]: {},
+  [`${DAVNamespaceShort.CALDAV_APPLE}:calendar-order`]: {},
   [`${DAVNamespaceShort.CALENDAR_SERVER}:getctag`]: {},
   [`${DAVNamespaceShort.DAV}:resourcetype`]: {},
   [`${DAVNamespaceShort.CALDAV}:supported-calendar-component-set`]: {},
@@ -489,6 +499,32 @@ export async function executePropfind<T>(
 // ============================================================================
 // Response Parsing Helpers
 // ============================================================================
+
+/**
+ * Coerce a parsed `calendar-order` PROPFIND value to an integer.
+ *
+ * tsdav's xml-js parser auto-coerces pure-digit element text to a JS
+ * `number`, while non-numeric text stays a `string`. Either shape can
+ * arrive depending on what the server stored. Anything else (nullish,
+ * object, NaN, ±Infinity) is treated as "no order set" so sorting can
+ * fall back to displayName.
+ */
+export function parseCalendarOrder(raw: unknown): number | undefined {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw
+  }
+  if (typeof raw === 'string') {
+    // Require the entire (trimmed) string to be an optionally-signed
+    // integer — otherwise `Number.parseInt` would happily turn "10abc"
+    // into 10 and swallow attacker-supplied trailing junk.
+    const trimmed = raw.trim()
+    if (/^[+-]?\d+$/.test(trimmed)) {
+      const n = Number.parseInt(trimmed, 10)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return undefined
+}
 
 /** Parse supported-calendar-component-set from PROPFIND response */
 export function parseCalendarComponents(supportedCalendarComponentSet: unknown): string[] | undefined {

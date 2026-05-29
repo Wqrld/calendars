@@ -69,6 +69,7 @@ import {
   parseSharePrivilege,
   parseInviteSharees,
   parseInviteOrganizerEmail,
+  parseCalendarOrder,
   getCalendarUrlFromEventUrl,
   withErrorHandling,
   type ShareeXmlParams,
@@ -229,11 +230,16 @@ export class CalDavService {
       ? displayname
       : (displayname as { _cdata?: string } | undefined)?._cdata ?? ''
 
+    const order = parseCalendarOrder(
+      (props as Record<string, unknown> | undefined)?.calendarOrder,
+    )
+
     return {
       url,
       displayName,
       description: (props as Record<string, string | undefined> | undefined)?.calendarDescription,
       color: (props as Record<string, string | undefined> | undefined)?.calendarColor,
+      order,
       includeInAvailability: !isTransparent,
       ownerType,
       mailboxEmail,
@@ -332,6 +338,7 @@ export class CalDavService {
       || params.color !== undefined
       || params.timezone !== undefined
       || params.includeInAvailability !== undefined
+      || params.order !== undefined
     if (!hasProps) {
       return { success: false, error: 'No properties to update' }
     }
