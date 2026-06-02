@@ -7,13 +7,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install dependencies
 RUN apt-get update && apt-get install -y \
     libpq-dev \
+    libonig-dev \
     postgresql-client \
     git \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo pdo_pgsql
+# Install PHP extensions. ``mbstring`` is mandatory: the
+# CalendarSanitizerPlugin uses ``mb_strcut`` to truncate
+# DESCRIPTION/SUMMARY/LOCATION on a UTF-8 boundary, and there is no
+# safe fallback — without it a multi-byte truncation would emit
+# invalid UTF-8 (or fatal).
+RUN docker-php-ext-install pdo pdo_pgsql mbstring
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
@@ -21,8 +26,11 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Create application directory
 WORKDIR /var/www/sabredav
 
-# Copy composer files and install dependencies from the lockfile
+# Copy composer files and install dependencies from the lockfile.
+# The post-install script (declared in composer.json) bumps SabreDAV's
+# MAX_DATE constant — see bin/patch-sabredav-max-date.php for the why.
 COPY composer.json composer.lock ./
+COPY bin/ ./bin/
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # Copy server configuration

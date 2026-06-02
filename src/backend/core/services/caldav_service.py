@@ -34,6 +34,21 @@ class CalDAVHTTPClient:
     BASE_URI_PATH = "/caldav"
     DEFAULT_TIMEOUT = 30
 
+    # Module-level connection-pooled HTTP session. The python-caldav
+    # library reuses TCP connections internally via its own Session;
+    # without this our raw-HTTP path would pay a fresh-connection cost
+    # per call (~hundreds of ms per request in tests), and lookups /
+    # uploads at module-call cadence multiply that cost. Sharing one
+    # ``requests.Session`` across instances reuses keep-alive and
+    # urllib3's connection pool.
+    _session: requests.Session | None = None
+
+    @classmethod
+    def _get_session(cls) -> requests.Session:
+        if cls._session is None:
+            cls._session = requests.Session()
+        return cls._session
+
     def __init__(self):
         self.base_url = settings.CALDAV_URL.rstrip("/")
 
@@ -128,13 +143,32 @@ class CalDAVHTTPClient:
             headers.update(extra_headers)
 
         url = self.build_url(path, query)
-        return requests.request(
+        session = self._get_session()
+        # ``allow_redirects=False`` is load-bearing: ``requests.Session``
+        # strips ``Authorization`` on cross-host redirects but NOT
+        # custom headers, so a 30x off our internal CalDAV would leak
+        # ``X-LS-Api-Key`` / ``X-LS-User`` / ``X-LS-Org-Id`` to the
+        # redirect target. SabreDAV doesn't redirect today; if it ever
+        # does, we want to see the 30x in our logs, not silently
+        # follow it.
+        response = session.request(
             method=method,
             url=url,
             headers=headers,
             data=data,
             timeout=timeout or self.DEFAULT_TIMEOUT,
+            allow_redirects=False,
         )
+        # The session is module-level and shared across users for
+        # connection-pool reuse. SabreDAV doesn't set cookies today,
+        # but a future plugin (or a misconfigured reverse proxy)
+        # could — and any cookie that lands in the jar would then
+        # propagate into the next user's request. Clear the jar
+        # after every response so cookie state stays per-call, not
+        # per-process. Keep-alive / pool reuse is unaffected
+        # (cookies and connection pooling are independent).
+        session.cookies.clear()
+        return response
 
     def internal_request(  # noqa: PLR0913  # pylint: disable=too-many-arguments
         self,
@@ -464,19 +498,66 @@ class CalDAVClient:
         Create an event in CalDAV server from raw ICS data.
         The ics_data should be a complete VCALENDAR string.
         Returns the event UID.
-        """
-        client = self._get_client(user)
-        calendar_url = self._calendar_url(calendar_path)
-        calendar = client.calendar(url=calendar_url)
 
-        try:
-            event = calendar.save_event(ics_data)
-            event_uid = str(event.icalendar_component.get("uid", ""))
-            logger.info("Created event in CalDAV server: %s", event_uid)
-            return event_uid
-        except Exception as e:
-            logger.error("Failed to create event in CalDAV server: %s", str(e))
-            raise
+        Uses a raw HTTP PUT with explicit UTF-8 encoding and charset.
+        The python ``caldav`` library's ``save_event`` round-trips
+        the ICS body through a Latin-1 path internally, double-
+        encoding non-ASCII text (e.g. ``中`` → ``c3 a4 c2 b8 c2 ad``
+        instead of ``e4 b8 ad``). Writing bytes directly avoids the
+        mojibake and matches the behaviour the frontend gets from
+        ``fetch``.
+        """
+        # Extract the UID from the body. Two iCal quirks to handle:
+        #   1. RFC 5545 §3.1 line folding: a CRLF immediately followed
+        #      by a single linear whitespace (space/tab) is a
+        #      continuation of the previous line. Unfold before
+        #      matching, otherwise a long UID split across lines
+        #      reads as truncated.
+        #   2. Property parameters: ``UID;X-FOO=bar:value`` is valid
+        #      iCal — the property name can be followed by zero or
+        #      more ``;PARAM=VAL`` segments before the ``:``.
+        unfolded_ics = re.sub(r"\r?\n[ \t]", "", ics_data)
+        # RFC 5545 §3.1: property names are case-insensitive.
+        uid_match = re.search(
+            r"^UID(?:;[^:\r\n]*)?:(.+)$",
+            unfolded_ics,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        if not uid_match:
+            raise ValueError("ics_data missing UID property")
+        event_uid = uid_match.group(1).strip().strip("\r")
+
+        normalized = calendar_path.rstrip("/")
+        if not normalized.startswith("/"):
+            normalized = "/" + normalized
+        # UIDs from ICS bodies are attacker-influenceable; RFC 5545 §3.8.4.7
+        # only requires globally-unique text, so a UID can legally contain
+        # ``/``, ``?``, ``#``, etc. URL-escape it before embedding in the
+        # href so a crafted UID cannot break out of the calendar collection
+        # path or smuggle a query string.
+        encoded_uid = quote(event_uid, safe="")
+        href = f"{normalized}/{encoded_uid}.ics"
+
+        http = CalDAVHTTPClient()
+        response = http.request(
+            "PUT",
+            user,
+            href,
+            data=ics_data.encode("utf-8"),
+            content_type="text/calendar; charset=utf-8",
+            extra_headers={"If-None-Match": "*"},
+        )
+        if response.status_code not in (200, 201, 204):
+            logger.error(
+                "Failed to create event in CalDAV server (%s): %s",
+                response.status_code,
+                response.text[:500],
+            )
+            raise RuntimeError(
+                f"CalDAV PUT failed with {response.status_code}: {response.text[:200]}"
+            )
+        logger.info("Created event in CalDAV server: %s", event_uid)
+        return event_uid
 
     def create_event(self, user, calendar_path: str, event_data: dict) -> str:
         """

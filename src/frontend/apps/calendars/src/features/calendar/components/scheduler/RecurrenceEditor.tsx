@@ -8,6 +8,21 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { IcsRecurrenceRule, IcsWeekDay } from "ts-ics";
 
+import { FOREVER_YEARS_THRESHOLD } from "../../services/dav/constants";
+
+const SECONDS_PER_YEAR = 86400 * 365;
+const FOREVER_THRESHOLD_SECS = FOREVER_YEARS_THRESHOLD * SECONDS_PER_YEAR;
+
+const FREQ_SECONDS: Record<string, number> = {
+  YEARLY: SECONDS_PER_YEAR,
+  MONTHLY: 86400 * 30,
+  WEEKLY: 86400 * 7,
+  DAILY: 86400,
+  HOURLY: 3600,
+  MINUTELY: 60,
+  SECONDLY: 1,
+};
+
 type RecurrenceFrequency = IcsRecurrenceRule["frequency"];
 type EndType = "never" | "count" | "date";
 
@@ -98,9 +113,39 @@ function getDateWarning(
   return null;
 }
 
-function getEndType(value?: IcsRecurrenceRule): EndType {
-  if (value?.count) return "count";
-  if (value?.until) return "date";
+export function isForeverCount(rule: IcsRecurrenceRule): boolean {
+  if (!rule.count) return false;
+  const stepSecs = FREQ_SECONDS[rule.frequency];
+  if (!stepSecs) return false;
+  const interval = rule.interval ?? 1;
+  return rule.count * interval * stepSecs > FOREVER_THRESHOLD_SECS;
+}
+
+// `IcsDateObject` carries both `date` (real UTC) and `local.date`
+// (TZID-stripped "fake UTC"). When TZID is present, `local.date` is
+// the authoritative wall-clock instant; otherwise fall back to
+// `date`. Used by every UNTIL-reading path so classification and
+// rendering agree on the same resolved Date.
+export function getResolvedUntilDate(
+  rule: IcsRecurrenceRule,
+): Date | undefined {
+  const date = rule.until?.local?.date ?? rule.until?.date;
+  return date instanceof Date ? date : undefined;
+}
+
+export function isForeverUntil(rule: IcsRecurrenceRule): boolean {
+  const date = getResolvedUntilDate(rule);
+  if (!date) return false;
+  return date.getTime() - Date.now() > FOREVER_THRESHOLD_SECS * 1000;
+}
+
+export function getEndType(value?: IcsRecurrenceRule): EndType {
+  if (value?.count) {
+    return isForeverCount(value) ? "never" : "count";
+  }
+  if (value?.until) {
+    return isForeverUntil(value) ? "never" : "date";
+  }
   return "never";
 }
 
@@ -109,13 +154,17 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
 
   const [isCustom, setIsCustom] = useState(() => {
     if (!value) return false;
+    const userCount =
+      value.count && !isForeverCount(value) ? value.count : undefined;
+    const userUntil =
+      value.until && !isForeverUntil(value) ? value.until : undefined;
     return !!(
       value.interval !== 1 ||
       value.byDay?.length ||
       value.byMonthday?.length ||
       value.byMonth?.length ||
-      value.count ||
-      value.until
+      userCount ||
+      userUntil
     );
   });
 
@@ -178,13 +227,16 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
       result += ` · ${dayLabels.join(", ")}`;
     }
 
-    if (value.until) {
-      const dateStr =
-        value.until.date instanceof Date
-          ? value.until.date.toISOString().split("T")[0]
-          : "";
+    // Defer to ``getEndType``: a ``count`` / ``until`` past the
+    // forever threshold classifies as ``never`` and must not show
+    // a date / count fragment, otherwise the summary contradicts
+    // the active end-of-recurrence button.
+    const summaryEndType = getEndType(value);
+    if (summaryEndType === "date" && value.until) {
+      const untilDate = getResolvedUntilDate(value);
+      const dateStr = untilDate ? untilDate.toISOString().split("T")[0] : "";
       result += ` · ${t("calendar.recurrence.on")} ${dateStr}`;
-    } else if (value.count) {
+    } else if (summaryEndType === "count" && value.count) {
       result += ` · ${value.count} ${t("calendar.recurrence.occurrences")}`;
     }
 
@@ -483,11 +535,14 @@ export function RecurrenceEditor({ value, onChange }: RecurrenceEditorProps) {
                   label=""
                   type="date"
                   variant="classic"
-                  value={
-                    value?.until?.date instanceof Date
-                      ? value.until.date.toISOString().split("T")[0]
-                      : ""
-                  }
+                  value={(() => {
+                    const untilDate = value
+                      ? getResolvedUntilDate(value)
+                      : undefined;
+                    return untilDate
+                      ? untilDate.toISOString().split("T")[0]
+                      : "";
+                  })()}
                   onChange={(e) =>
                     handleChange({
                       until: {

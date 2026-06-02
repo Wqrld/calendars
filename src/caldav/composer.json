@@ -6,11 +6,17 @@
         "php": ">=8.1",
         "sabre/dav": "dev-master#eb16eb7fdaa384c4a827e40152cc53c0e1488cab",
         "ext-pdo": "*",
-        "ext-pdo_pgsql": "*"
+        "ext-pdo_pgsql": "*",
+        "ext-mbstring": "*"
     },
     "autoload": {
         "psr-4": {
             "Calendars\\SabreDav\\": "src/"
         }
+    },
+    "scripts": {
+        "patch-sabredav-max-date": "@php bin/patch-sabredav-max-date.php",
+        "post-install-cmd": "@patch-sabredav-max-date",
+        "post-update-cmd": "@patch-sabredav-max-date"
     }
 }
