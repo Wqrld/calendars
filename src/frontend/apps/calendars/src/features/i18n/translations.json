@@ -245,7 +245,7 @@
           "myCalendars": "My calendars",
           "sharedCalendars": "Shared calendars",
           "shared": "(shared)",
-          "mailboxCalendar": "Mailbox calendar: {{email}}",
+          "mailboxCalendar": "Linked to mailbox: {{email}}",
           "unnamed": "Unnamed calendar",
           "showCalendar": "Show calendar",
           "edit": "Edit",
@@ -434,23 +434,25 @@
         "invitation": {
           "title": "Event invitation",
           "heading": "Event invitation",
+          "badge": "Event invitation",
           "body": "{{organizer}} invites you to an event"
         },
         "update": {
           "title": "Event updated",
           "heading": "Event updated",
-          "badge": "UPDATED",
+          "badge": "INVITATION UPDATED",
           "body": "{{organizer}} has updated an event you are invited to"
         },
         "cancel": {
           "title": "Event cancelled",
           "heading": "Event cancelled",
-          "badge": "CANCELLED",
-          "body": "{{organizer}} has cancelled the following event"
+          "badge": "INVITATION CANCELLED",
+          "body": "{{organizer}} has cancelled this event"
         },
         "reply": {
           "title": "Event reply",
           "heading": "Reply received",
+          "badge": "Response",
           "body": "{{attendee}} has replied to your event"
         },
         "labels": {
@@ -502,6 +504,7 @@
         "accepted": "You have accepted the invitation",
         "tentative": "You have replied \"maybe\" to the invitation",
         "declined": "You have declined the invitation",
+        "processing": "Sending your response…",
         "responseSent": "Your response has been sent to the organizer.",
         "failed": "Failed to send your response. Please try again.",
         "error": {
@@ -1185,7 +1188,7 @@
           "sharedCalendars": "Calendriers partagés",
           "shared": "(partagé)",
           "unnamed": "Calendrier sans nom",
-          "mailboxCalendar": "Boîte partagée : {{email}}",
+          "mailboxCalendar": "Lié à la boîte : {{email}}",
           "showCalendar": "Afficher le calendrier",
           "edit": "Modifier",
           "delete": "Supprimer",
@@ -1373,23 +1376,25 @@
         "invitation": {
           "title": "Invitation à un événement",
           "heading": "Invitation à un événement",
+          "badge": "Invitation à un événement",
           "body": "{{organizer}} vous invite à un événement"
         },
         "update": {
           "title": "Événement modifié",
           "heading": "Événement modifié",
-          "badge": "MODIFIÉ",
+          "badge": "INVITATION MODIFIÉE",
           "body": "{{organizer}} a modifié un événement auquel vous êtes invité(e)"
         },
         "cancel": {
           "title": "Événement annulé",
           "heading": "Événement annulé",
-          "badge": "ANNULÉ",
-          "body": "{{organizer}} a annulé l'événement suivant"
+          "badge": "INVITATION ANNULÉE",
+          "body": "{{organizer}} a annulé cet événement"
         },
         "reply": {
           "title": "Réponse à l'événement",
           "heading": "Réponse reçue",
+          "badge": "Réponse",
           "body": "{{attendee}} a répondu à votre événement"
         },
         "labels": {
@@ -1441,6 +1446,7 @@
         "accepted": "Vous avez accepté l'invitation",
         "tentative": "Vous avez répondu « peut-être » à l'invitation",
         "declined": "Vous avez décliné l'invitation",
+        "processing": "Envoi de votre réponse…",
         "responseSent": "Votre réponse a été envoyée à l'organisateur.",
         "failed": "Échec de l'envoi de votre réponse. Veuillez réessayer.",
         "error": {
@@ -1866,7 +1872,7 @@
           "sharedCalendars": "Gedeelde kalenders",
           "shared": "(gedeeld)",
           "unnamed": "Naamloze kalender",
-          "mailboxCalendar": "Gedeelde mailbox: {{email}}",
+          "mailboxCalendar": "Gekoppeld aan mailbox: {{email}}",
           "showCalendar": "Kalender tonen",
           "edit": "Bewerken",
           "delete": "Verwijderen",
@@ -2054,23 +2060,25 @@
         "invitation": {
           "title": "Uitnodiging voor evenement",
           "heading": "Uitnodiging voor evenement",
+          "badge": "Uitnodiging voor evenement",
           "body": "{{organizer}} nodigt u uit voor een evenement"
         },
         "update": {
           "title": "Evenement bijgewerkt",
           "heading": "Evenement bijgewerkt",
-          "badge": "BIJGEWERKT",
+          "badge": "UITNODIGING BIJGEWERKT",
           "body": "{{organizer}} heeft een evenement bijgewerkt waarvoor u bent uitgenodigd"
         },
         "cancel": {
           "title": "Evenement geannuleerd",
           "heading": "Evenement geannuleerd",
-          "badge": "GEANNULEERD",
-          "body": "{{organizer}} heeft het volgende evenement geannuleerd"
+          "badge": "UITNODIGING GEANNULEERD",
+          "body": "{{organizer}} heeft dit evenement geannuleerd"
         },
         "reply": {
           "title": "Antwoord op evenement",
           "heading": "Antwoord ontvangen",
+          "badge": "Antwoord",
           "body": "{{attendee}} heeft gereageerd op uw evenement"
         },
         "labels": {
@@ -2122,6 +2130,7 @@
         "accepted": "U heeft de uitnodiging geaccepteerd",
         "tentative": "U heeft \"misschien\" geantwoord op de uitnodiging",
         "declined": "U heeft de uitnodiging afgewezen",
+        "processing": "Uw antwoord wordt verzonden…",
         "responseSent": "Uw antwoord is naar de organisator gestuurd.",
         "failed": "Het verzenden van uw antwoord is mislukt. Probeer het opnieuw.",
         "error": {

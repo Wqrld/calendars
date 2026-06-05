@@ -147,4 +147,44 @@ class AuditCalDAVBackend extends PDO
 
         return '"' . $extraData['etag'] . '"';
     }
+
+    /**
+     * The ``calendarobjects.calendardata`` column is a PostgreSQL ``bytea``
+     * (LOB), so PDO returns it as a stream resource on read. SabreDAV and
+     * vobject's ITip\\Broker do ``is_string()`` checks downstream and
+     * silently treat non-strings as "no data" — the most visible symptom is
+     * that deleting an event with attendees produces zero CANCEL iTIP
+     * messages because ``parseEvent`` bails when ``$node->get()`` is a
+     * stream. We materialise the stream once at the backend boundary so
+     * every caller (CalendarObject::get, REPORT calendar-multiget, the
+     * scheduling plugin, the internal API, etc.) sees a string.
+     */
+    private static function materializeCalendarData(?array $row): ?array
+    {
+        if ($row === null) {
+            return $row;
+        }
+        if (isset($row['calendardata']) && is_resource($row['calendardata'])) {
+            $contents = stream_get_contents($row['calendardata']);
+            // stream_get_contents() returns false on read failure; coerce to
+            // null so downstream `is_string()` checks treat the row as
+            // "no data" instead of `false` (a bool would otherwise sneak
+            // through and corrupt iTIP/REPORT serialization).
+            $row['calendardata'] = $contents === false ? null : $contents;
+        }
+        return $row;
+    }
+
+    public function getCalendarObject($calendarId, $objectUri)
+    {
+        return self::materializeCalendarData(parent::getCalendarObject($calendarId, $objectUri));
+    }
+
+    public function getMultipleCalendarObjects($calendarId, array $uris)
+    {
+        return array_map(
+            [self::class, 'materializeCalendarData'],
+            parent::getMultipleCalendarObjects($calendarId, $uris)
+        );
+    }
 }
