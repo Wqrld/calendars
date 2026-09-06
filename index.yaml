@@ -1,0 +1,13 @@
+apiVersion: v1
+entries:
+  calendars:
+  - apiVersion: v2
+    appVersion: latest
+    created: "2026-09-06T13:55:35.769042063Z"
+    digest: fc8915ca928873e8ac8ca70323089254c2d1612566109b8a91c18186d695c90d
+    name: calendars
+    type: application
+    urls:
+    - https://Wqrld.github.io/calendars/calendars-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-09-06T13:55:35.766797217Z"
