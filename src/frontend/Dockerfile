@@ -80,4 +80,11 @@ COPY --from=frontend-source /srv /srv
 
 COPY ./Caddyfile /etc/caddy/Caddyfile
 
+# Un-privileged user running the server. `caddy:2-alpine` ships no USER, so without this
+# the published image runs as root and an orchestrator setting `runAsNonRoot` refuses it.
+# Caddy listens on :8080, so no privileged port is involved, and with `admin off` plus
+# `auto_https off` it never writes to the root-owned XDG directories.
+ARG DOCKER_USER
+USER ${DOCKER_USER}
+
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

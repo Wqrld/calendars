@@ -25,6 +25,9 @@ jobs:
       # build context) as a named build context so the production stage can
       # COPY --from=i18n. Keeps prod calendar emails working.
       build_contexts: "i18n=src/frontend/src/features/i18n"
+      # Without this the image runs as root and any runAsNonRoot deployment refuses to
+      # start it. 1001:127 is what the sibling projects publish.
+      docker_user: "1001:127"
 
   docker-publish-frontend:
     uses: ./.github/workflows/docker-publish.yml
@@ -39,6 +42,7 @@ jobs:
       context: "src/frontend"
       target: frontend-production
       arm64_reuse_amd64_build_arg: "FRONTEND_IMAGE"
+      docker_user: "1001:127"
 
   docker-publish-caldav:
     uses: ./.github/workflows/docker-publish.yml
