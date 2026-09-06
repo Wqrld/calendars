@@ -20,6 +20,7 @@ import sentry_sdk
 from configurations import Configuration, values
 from lasuite.configuration.values import SecretFileValue
 from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.logging import ignore_logger
 
 # pylint: disable=too-many-lines
 
@@ -330,6 +331,7 @@ class Base(Configuration):
         "django.middleware.csrf.CsrfViewMiddleware",
         "django.contrib.auth.middleware.AuthenticationMiddleware",
         "django.contrib.messages.middleware.MessageMiddleware",
+        "dockerflow.django.middleware.DockerflowMiddleware",
     ]
 
     AUTHENTICATION_BACKENDS = [
@@ -346,6 +348,7 @@ class Base(Configuration):
         "corsheaders",
         "django_dramatiq",
         "django_filters",
+        "dockerflow.django",
         "rest_framework",
         "rest_framework_api_key",
         "parler",
@@ -948,6 +951,9 @@ class Base(Configuration):
                 integrations=[DjangoIntegration()],
             )
             sentry_sdk.set_tag("application", "backend")
+
+            # Ignore the logs added by the DockerflowMiddleware
+            ignore_logger("request.summary")
 
         if (
             cls.OIDC_FALLBACK_TO_EMAIL_FOR_IDENTIFICATION

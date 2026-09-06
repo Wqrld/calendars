@@ -10,6 +10,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- ✨(helm) add a Helm chart to deploy Calendars on Kubernetes
+
 ## [0.2.0] - 2026-11-12
 
 ### Added
