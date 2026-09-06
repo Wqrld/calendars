@@ -10,6 +10,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- ✨(helm) add a Helm chart to deploy Calendars on Kubernetes
+- ✨(back) add dockerflow health endpoints `__heartbeat__` and
+  `__lbheartbeat__`
+
 ## [0.1.0] - 2026-06-18
 
 First public release.

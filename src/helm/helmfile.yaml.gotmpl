@@ -1,0 +1,31 @@
+environments:
+  dev:
+    values:
+      - version: 0.1.0
+  feature:
+    values:
+      - version: 0.1.0
+        feature: ci
+        domain: example.com
+        imageTag: demo
+---
+repositories:
+- name: dev-backends
+  url: https://suitenumerique.github.io/helm-dev-backend
+---
+
+releases:
+  - name: dev-backend
+    namespace: {{ .Namespace }}
+    chart: dev-backends/dev-backend
+    version: 0.0.8
+    values:
+      - env.d/{{ .Environment.Name }}/values.dev-backend.yaml.gotmpl
+
+
+  - name: calendars
+    version: {{ .Values.version }}
+    namespace: {{ .Namespace }}
+    chart: ./calendars
+    values:
+      - env.d/{{ .Environment.Name }}/values.calendars.yaml.gotmpl

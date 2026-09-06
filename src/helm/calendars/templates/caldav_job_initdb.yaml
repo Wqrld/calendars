@@ -1,0 +1,101 @@
+{{- $envVars := include "calendars.common.env" (list . .Values.caldav) -}}
+{{- $fullName := include "calendars.caldav.fullname" . -}}
+{{- $component := "caldav" -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-initdb
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+  {{- with .Values.caldav.initdbJobAnnotations }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    {{- include "calendars.common.labels" (list . $component) | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.caldav.jobs.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.caldav.jobs.backoffLimit }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.caldav.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "calendars.common.selectorLabels" (list . $component) | nindent 8 }}
+    spec:
+      {{- if $.Values.image.credentials }}
+      imagePullSecrets:
+        - name: {{ include "calendars.secret.dockerconfigjson.name" (dict "fullname" (include "calendars.fullname" .) "imageCredentials" $.Values.image.credentials) }}
+      {{- end}}
+      {{- if .Values.caldav.serviceAccountName }}
+      serviceAccountName: {{ .Values.caldav.serviceAccountName }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}-caldav
+          image: "{{ .Values.caldav.image.repository }}:{{ .Values.caldav.image.tag }}"
+          imagePullPolicy: {{ .Values.caldav.image.pullPolicy }}
+          {{- with .Values.caldav.initdb.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $envVars }}
+          env:
+            {{- $envVars | indent 12 }}
+          {{- end }}
+          {{- if .Values.caldav.envFrom }}
+          envFrom:
+            {{- toYaml .Values.caldav.envFrom | nindent 12 }}
+          {{- end }}
+          {{- with .Values.caldav.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.caldav.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.caldav.extraVolumeMounts }}
+          volumeMounts:
+            {{- range .Values.caldav.extraVolumeMounts }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .subPath | default "" }}
+              readOnly: {{ .readOnly }}
+            {{- end }}
+          {{- end }}
+      {{- with .Values.caldav.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.caldav.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.caldav.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: {{ .Values.caldav.initdb.restartPolicy }}
+      {{- if .Values.caldav.extraVolumes }}
+      volumes:
+        {{- range .Values.caldav.extraVolumes }}
+        - name: {{ .name }}
+          {{- if .existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .existingClaim }}
+          {{- else if .secret }}
+          secret:
+            {{- toYaml .secret | nindent 12 }}
+          {{- else if .configMap }}
+          configMap:
+            {{- toYaml .configMap | nindent 12 }}
+          {{- else if .emptyDir }}
+          emptyDir:
+            {{- toYaml .emptyDir | nindent 12 }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+      {{- end }}

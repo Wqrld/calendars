@@ -99,3 +99,7 @@ db.sqlite3
 openspec/
 .claude/
 claude/
+
+# Next.JS
+**/.next/
+**/next-env.d.ts

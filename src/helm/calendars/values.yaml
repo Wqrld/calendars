@@ -1,0 +1,553 @@
+# Default values for calendars.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+## @section General configuration
+
+## @param image.repository Repository to use to pull calendars's container image
+## @param image.tag calendars's container tag
+## @param image.pullPolicy Container image pull policy
+## @extra image.credentials.username Username for container registry authentication
+## @extra image.credentials.password Password for container registry authentication
+## @extra image.credentials.registry Registry url for which the credentials are specified
+## @extra image.credentials.name Name of the generated secret for imagePullSecrets
+image:
+  repository: ghcr.io/suitenumerique/calendars-backend
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+## @param nameOverride Override the chart name
+## @param fullnameOverride Override the full application name
+nameOverride: ""
+fullnameOverride: ""
+
+## @skip commonEnvVars
+commonEnvVars: &commonEnvVars
+  <<: []
+
+## @param ingress.enabled whether to enable the Ingress or not
+## @param ingress.className IngressClass to use for the Ingress
+## @param ingress.host Host for the Ingress
+## @param ingress.path Path to use for the Ingress
+ingress:
+  enabled: false
+  className: null
+  host: calendars.example.com
+  path: /
+  ## @param ingress.hosts Additional host to configure for the Ingress
+  hosts: []
+  #  - chart-example.local
+  ## @param ingress.tls.enabled Whether to enable TLS for the Ingress
+  ## @param ingress.tls.secretName Secret name for TLS config
+  ## @skip ingress.tls.additional
+  ## @extra ingress.tls.additional[].secretName Secret name for additional TLS config
+  ## @extra ingress.tls.additional[].hosts[] Hosts for additional TLS config
+  tls:
+    enabled: true
+    secretName: null
+    additional: []
+
+  ## @param ingress.customBackends Add custom backends to ingress
+  customBackends: []
+
+## @param ingressAdmin.enabled whether to enable the Ingress or not
+## @param ingressAdmin.className IngressClass to use for the Ingress
+## @param ingressAdmin.host Host for the Ingress
+## @param ingressAdmin.path Path to use for the Ingress
+ingressAdmin:
+  enabled: false
+  className: null
+  host: calendars.example.com
+  path: /admin
+  ## @param ingressAdmin.hosts Additional host to configure for the Ingress
+  hosts: []
+  #  - chart-example.local
+  ## @param ingressAdmin.tls.enabled Whether to enable TLS for the Ingress
+  ## @param ingressAdmin.tls.secretName Secret name for TLS config
+  ## @skip ingressAdmin.tls.additional
+  ## @extra ingressAdmin.tls.additional[].secretName Secret name for additional TLS config
+  ## @extra ingressAdmin.tls.additional[].hosts[] Hosts for additional TLS config
+  tls:
+    enabled: true
+    secretName: null
+    additional: []
+
+## @section backend
+
+backend:
+  ## @param backend.command Override the backend container command
+  command: []
+
+  ## @param backend.args Override the backend container args
+  args: []
+
+  ## @param backend.replicas Amount of backend replicas
+  replicas: 3
+
+  ## @param backend.shareProcessNamespace Enable share process namespace between containers
+  shareProcessNamespace: false
+
+  ## @param backend.sidecars Add sidecars containers to backend deployment
+  sidecars: []
+
+  ## @param backend.migrateJobAnnotations Annotations for the migrate job
+  migrateJobAnnotations: {}
+
+  ## @param backend.jobs.ttlSecondsAfterFinished Period to wait before remove jobs
+  ## @param backend.jobs.backoffLimit Numbers of jobs retries
+  jobs:
+    ttlSecondsAfterFinished: 30
+    backoffLimit: 2
+
+  ## @param backend.securityContext.allowPrivilegeEscalation Whether to allow privilege escalation for the backend container
+  ## @param backend.securityContext.capabilities.drop List of capabilities to drop for the backend container
+  ## @param backend.securityContext.runAsNonRoot Whether to run the backend container as a non-root user
+  ## @param backend.securityContext.seccompProfile.type Seccomp profile type for the backend container
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## @param backend.envVars Configure backend container environment variables
+  ## @extra backend.envVars.BY_VALUE Example environment variable by setting value directly
+  ## @extra backend.envVars.FROM_CONFIGMAP.configMapKeyRef.name Name of a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra backend.envVars.FROM_CONFIGMAP.configMapKeyRef.key Key within a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra backend.envVars.FROM_SECRET.secretKeyRef.name Name of a Secret when configuring env vars from a Secret
+  ## @extra backend.envVars.FROM_SECRET.secretKeyRef.key Key within a Secret when configuring env vars from a Secret
+  ## @skip backend.envVars
+  envVars:
+    <<: *commonEnvVars
+
+  ## @skip backend.envFrom List of environment variables taken from Secrets or configMaps, common to backend and worker
+  envFrom: []
+  # envFrom:
+  #   - secret:
+  #       name: super-secret-user-credentials
+  #   - configMapRef:
+  #       name: my-environment-variables
+
+  ## @extra backend.django.envVars Backend web deployment specific environment variables (not shared with the worker)
+  ## @skip backend.django.envVars
+  ## @skip backend.django.envFrom List of environment variables taken from Secrets or configMaps, specific to the backend web deployment
+  django:
+    envVars: {}
+    envFrom: []
+
+  ## @param backend.podAnnotations Annotations to add to the backend Pod
+  podAnnotations: {}
+
+  ## @param backend.dpAnnotations Annotations to add to the backend Deployment
+  dpAnnotations: {}
+
+  ## @param backend.service.type backend Service type
+  ## @param backend.service.port backend Service listening port
+  ## @param backend.service.targetPort backend container listening port
+  ## @param backend.service.annotations Annotations to add to the backend Service
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+    annotations: {}
+
+  ## @param backend.migrate.command backend migrate command
+  ## @param backend.migrate.restartPolicy backend migrate job restart policy
+  migrate:
+    command:
+      - /bin/sh
+      - "-c"
+      - |
+        attempt=0
+        until output=$(python manage.py check --database default 2>&1)
+        do
+          attempt=$((attempt + 1))
+          echo "Database check failed (attempt $attempt), retrying in 2s:"
+          echo "$output"
+          sleep 2
+        done
+
+        echo "Database is ready"
+
+        python manage.py migrate --no-input
+    restartPolicy: Never
+
+  ## @param backend.createsuperuser.command backend migrate command
+  ## @param backend.createsuperuser.restartPolicy backend migrate job restart policy
+  createsuperuser:
+    command:
+      - "/bin/sh"
+      - "-c"
+      - |
+        attempt=0
+        until output=$(python manage.py check --database default 2>&1)
+        do
+          attempt=$((attempt + 1))
+          echo "Database check failed (attempt $attempt), retrying in 2s:"
+          echo "$output"
+          sleep 2
+        done
+
+        echo "Database is ready"
+
+        python manage.py createsuperuser --email $DJANGO_SUPERUSER_EMAIL --password $DJANGO_SUPERUSER_PASSWORD
+    restartPolicy: Never
+
+  ## @extra backend.job job dedicated to run a random management command, for example after a deployment
+  ## @param backend.job.name The name to use to describe this job
+  ## @param backend.job.command The management command to execute
+  ## @param backend.job.restartPolicy The restart policy for the job.
+  ## @extra backend.job.annotations Annotations to add to the job [default: argocd.argoproj.io/hook: PostSync]
+  ## @skip backend.job.annotations.argocd.argoproj.io/hook
+  job:
+    name: ""
+    command: []
+    restartPolicy: Never
+    annotations:
+      argocd.argoproj.io/hook: PostSync
+
+  # List of cronjob to add
+  # cronjobs:
+  #   - name: reset-database
+  #     schedule: "0 */2 * * *"
+  #     command:
+  #       - "/bin/sh"
+  #       - "-c"
+  #       - python manage.py flush --no-input
+  ## @param backend.cronjobs Cronjob name, schedule, command
+  cronjobs: []
+
+  ## @param backend.probes.liveness.path [nullable] Configure path for backend HTTP liveness probe
+  ## @param backend.probes.liveness.targetPort [nullable] Configure port for backend HTTP liveness probe
+  ## @param backend.probes.liveness.initialDelaySeconds [nullable] Configure initial delay for backend liveness probe
+  ## @param backend.probes.liveness.timeoutSeconds [nullable] Configure timeout for backend liveness probe
+  ## @extra backend.probes.startup.path [nullable] Configure path for backend HTTP startup probe
+  ## @extra backend.probes.startup.targetPort [nullable] Configure port for backend HTTP startup probe
+  ## @extra backend.probes.startup.initialDelaySeconds [nullable] Configure initial delay for backend startup probe
+  ## @extra backend.probes.startup.timeoutSeconds [nullable] Configure timeout for backend startup probe
+  ## @param backend.probes.readiness.path [nullable] Configure path for backend HTTP readiness probe
+  ## @param backend.probes.readiness.targetPort [nullable] Configure port for backend HTTP readiness probe
+  ## @param backend.probes.readiness.initialDelaySeconds [nullable] Configure initial delay for backend readiness probe
+  ## @param backend.probes.readiness.timeoutSeconds [nullable] Configure timeout for backend readiness probe
+  probes:
+    liveness:
+      path: /__lbheartbeat__
+      initialDelaySeconds: 10
+    readiness:
+      path: /__heartbeat__
+      initialDelaySeconds: 10
+
+  ## @param backend.resources Resource requirements for the backend container
+  resources: {}
+
+  ## @param backend.nodeSelector Node selector for the backend Pod
+  nodeSelector: {}
+
+  ## @param backend.tolerations Tolerations for the backend Pod
+  tolerations: []
+
+  ## @param backend.affinity Affinity for the backend Pod
+  affinity: {}
+
+  ## @param backend.persistence Additional volumes to create and mount on the backend. Used for debugging purposes
+  ## @extra backend.persistence.volume-name.size Size of the additional volume
+  ## @extra backend.persistence.volume-name.type Type of the additional volume, persistentVolumeClaim or emptyDir
+  ## @extra backend.persistence.volume-name.mountPath Path where the volume should be mounted to
+  persistence: {}
+
+  ## @param backend.extraVolumeMounts Additional volumes to mount on the backend.
+  extraVolumeMounts: []
+
+  ## @param backend.extraVolumes Additional volumes to mount on the backend.
+  extraVolumes: []
+
+  ## @param backend.pdb.enabled Enable pdb on backend
+  pdb:
+    enabled: true
+
+  ## @param backend.serviceAccountName Optional service account name to use for backend pods
+  serviceAccountName: null
+
+  ## @param backend.themeCustomization.enabled Enable theme customization
+  ## @param backend.themeCustomization.file_content Content of the theme customization file. Must be a json object.
+  ## @param backend.themeCustomization.mount_path Path where the customization file will be mounted in the backend deployment.
+  themeCustomization:
+    enabled: false
+    file_content: ""
+    mount_path: /app/calendars/configuration/theme
+
+  ## @param backend.worker.replicas Amount of worker replicas
+  ## @param backend.worker.command Override the worker container command
+  ## @param backend.worker.args Override the worker container args
+  ## @param backend.worker.resources Resource requirements for the worker container
+  ## @param backend.worker.probes Configure probe for the worker
+  ## @extra backend.worker.probes.liveness.exec.command Override the worker container liveness probe command
+  ## @extra backend.worker.probes.liveness.initialDelaySeconds Initial delay for the worker container liveness probe
+  ## @extra backend.worker.probes.liveness.timeoutSeconds Timeout for the worker container liveness probe
+  ## @extra backend.worker.probes.readiness.exec.command Override the worker container readiness probe command
+  ## @extra backend.worker.probes.readiness.initialDelaySeconds Initial delay for the worker container readiness probe
+  ## @extra backend.worker.probes.readiness.timeoutSeconds Timeout for the worker container readiness probe
+  ## @extra backend.worker.envVars Worker specific environment variables (not shared with the backend web deployment)
+  ## @skip backend.worker.envVars
+  ## @skip backend.worker.envFrom List of environment variables taken from Secrets or configMaps, specific to the worker
+  worker:
+    replicas: 1
+    command: []
+    args: ["python", "worker.py", "-v", "2"]
+    envVars: {}
+    envFrom: []
+    resources: {}
+    # Dramatiq has no `celery inspect ping` equivalent, so the worker ships
+    # without probes rather than with a probe that cannot tell it apart from
+    # a hung one.
+    probes: {}
+
+## @section frontend
+
+frontend:
+  ## @param frontend.image.repository Repository to use to pull calendars's frontend container image
+  ## @param frontend.image.tag calendars's frontend container tag
+  ## @param frontend.image.pullPolicy frontend container image pull policy
+  image:
+    repository: ghcr.io/suitenumerique/calendars-frontend
+    pullPolicy: IfNotPresent
+    tag: "latest"
+
+  ## @param frontend.command Override the frontend container command
+  command: []
+
+  ## @param frontend.args Override the frontend container args
+  args: []
+
+  ## @param frontend.replicas Amount of frontend replicas
+  replicas: 3
+
+  ## @param frontend.shareProcessNamespace Enable share process namespace between containers
+  shareProcessNamespace: false
+
+  ## @param frontend.sidecars Add sidecars containers to frontend deployment
+  sidecars: []
+
+  ## @param frontend.securityContext.allowPrivilegeEscalation Whether to allow privilege escalation for the frontend container
+  ## @param frontend.securityContext.capabilities.drop List of capabilities to drop for the frontend container
+  ## @param frontend.securityContext.runAsNonRoot Whether to run the frontend container as a non-root user
+  ## @param frontend.securityContext.seccompProfile.type Seccomp profile type for the frontend container
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## @param frontend.envVars Configure frontend container environment variables
+  ## @extra frontend.envVars.BY_VALUE Example environment variable by setting value directly
+  ## @extra frontend.envVars.FROM_CONFIGMAP.configMapKeyRef.name Name of a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra frontend.envVars.FROM_CONFIGMAP.configMapKeyRef.key Key within a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra frontend.envVars.FROM_SECRET.secretKeyRef.name Name of a Secret when configuring env vars from a Secret
+  ## @extra frontend.envVars.FROM_SECRET.secretKeyRef.key Key within a Secret when configuring env vars from a Secret
+  ## @skip frontend.envVars
+  envVars:
+    <<: *commonEnvVars
+
+  ## @skip frontend.envFrom List of environment variables taken from Secrets or configMaps
+  envFrom: []
+  # envFrom:
+  #   - secret:
+  #       name: super-secret-user-credentials
+  #   - configMapRef:
+  #       name: my-environment-variables
+
+  ## @param frontend.podAnnotations Annotations to add to the frontend Pod
+  podAnnotations: {}
+
+  ## @param frontend.dpAnnotations Annotations to add to the frontend Deployment
+  dpAnnotations: {}
+
+  ## @param frontend.service.type frontend Service type
+  ## @param frontend.service.port frontend Service listening port
+  ## @param frontend.service.targetPort frontend container listening port
+  ## @param frontend.service.annotations Annotations to add to the frontend Service
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    annotations: {}
+
+  ## @param frontend.probes Configure probe for frontend
+  ## @extra frontend.probes.liveness.path Configure path for frontend HTTP liveness probe
+  ## @extra frontend.probes.liveness.targetPort Configure port for frontend HTTP liveness probe
+  ## @extra frontend.probes.liveness.initialDelaySeconds Configure initial delay for frontend liveness probe
+  ## @extra frontend.probes.liveness.initialDelaySeconds Configure timeout for frontend liveness probe
+  ## @extra frontend.probes.startup.path Configure path for frontend HTTP startup probe
+  ## @extra frontend.probes.startup.targetPort Configure port for frontend HTTP startup probe
+  ## @extra frontend.probes.startup.initialDelaySeconds Configure initial delay for frontend startup probe
+  ## @extra frontend.probes.startup.initialDelaySeconds Configure timeout for frontend startup probe
+  ## @extra frontend.probes.readiness.path Configure path for frontend HTTP readiness probe
+  ## @extra frontend.probes.readiness.targetPort Configure port for frontend HTTP readiness probe
+  ## @extra frontend.probes.readiness.initialDelaySeconds Configure initial delay for frontend readiness probe
+  ## @extra frontend.probes.readiness.initialDelaySeconds Configure timeout for frontend readiness probe
+  probes: {}
+
+  ## @param frontend.resources Resource requirements for the frontend container
+  resources: {}
+
+  ## @param frontend.nodeSelector Node selector for the frontend Pod
+  nodeSelector: {}
+
+  ## @param frontend.tolerations Tolerations for the frontend Pod
+  tolerations: []
+
+  ## @param frontend.affinity Affinity for the frontend Pod
+  affinity: {}
+
+  ## @param frontend.persistence Additional volumes to create and mount on the frontend. Used for debugging purposes
+  ## @extra frontend.persistence.volume-name.size Size of the additional volume
+  ## @extra frontend.persistence.volume-name.type Type of the additional volume, persistentVolumeClaim or emptyDir
+  ## @extra frontend.persistence.volume-name.mountPath Path where the volume should be mounted to
+  persistence: {}
+
+  ## @param frontend.extraVolumeMounts Additional volumes to mount on the frontend.
+  extraVolumeMounts: []
+
+  ## @param frontend.extraVolumes Additional volumes to mount on the frontend.
+  extraVolumes: []
+
+  ## @param frontend.pdb.enabled Enable pdb on frontend
+  pdb:
+    enabled: true
+
+  ## @param frontend.serviceAccountName Optional service account name to use for frontend pods
+  serviceAccountName: null
+
+## @section caldav
+
+caldav:
+  ## @param caldav.image.repository Repository to use to pull calendars's caldav container image
+  ## @param caldav.image.tag calendars's caldav container tag
+  ## @param caldav.image.pullPolicy caldav container image pull policy
+  image:
+    repository: ghcr.io/suitenumerique/calendars-caldav
+    pullPolicy: IfNotPresent
+    tag: "latest"
+
+  ## @param caldav.command Override the caldav container command
+  command: []
+
+  ## @param caldav.args Override the caldav container args
+  args: []
+
+  ## @param caldav.replicas Amount of caldav replicas
+  replicas: 1
+
+  ## @param caldav.jobs.ttlSecondsAfterFinished Period to wait before remove jobs
+  ## @param caldav.jobs.backoffLimit Numbers of jobs retries
+  jobs:
+    ttlSecondsAfterFinished: 30
+    backoffLimit: 2
+
+  ## @param caldav.initdbJobAnnotations Annotations for the initdb job
+  initdbJobAnnotations: {}
+
+  ## @param caldav.initdb.command caldav database initialization command
+  ## @param caldav.initdb.restartPolicy caldav initdb job restart policy
+  initdb:
+    command:
+      - "/bin/sh"
+      - "-c"
+      - /usr/local/bin/init-database.sh
+    restartPolicy: Never
+
+  # Apache serves on port 80, so the container keeps NET_BIND_SERVICE and is
+  # not run with runAsNonRoot.
+  ## @param caldav.securityContext.allowPrivilegeEscalation Whether to allow privilege escalation for the caldav container
+  ## @param caldav.securityContext.capabilities.drop List of capabilities to drop for the caldav container
+  ## @param caldav.securityContext.capabilities.add List of capabilities to add for the caldav container
+  ## @param caldav.securityContext.seccompProfile.type Seccomp profile type for the caldav container
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - "ALL"
+      add:
+        - "NET_BIND_SERVICE"
+    seccompProfile:
+      type: RuntimeDefault
+
+  ## @param caldav.envVars Configure caldav container environment variables
+  ## @extra caldav.envVars.BY_VALUE Example environment variable by setting value directly
+  ## @extra caldav.envVars.FROM_CONFIGMAP.configMapKeyRef.name Name of a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra caldav.envVars.FROM_CONFIGMAP.configMapKeyRef.key Key within a ConfigMap when configuring env vars from a ConfigMap
+  ## @extra caldav.envVars.FROM_SECRET.secretKeyRef.name Name of a Secret when configuring env vars from a Secret
+  ## @extra caldav.envVars.FROM_SECRET.secretKeyRef.key Key within a Secret when configuring env vars from a Secret
+  ## @skip caldav.envVars
+  envVars:
+    <<: *commonEnvVars
+
+  ## @skip caldav.envFrom List of environment variables taken from Secrets or configMaps
+  envFrom: []
+  # envFrom:
+  #   - secret:
+  #       name: super-secret-user-credentials
+  #   - configMapRef:
+  #       name: my-environment-variables
+
+  ## @param caldav.podAnnotations Annotations to add to the caldav Pod
+  podAnnotations: {}
+
+  ## @param caldav.dpAnnotations Annotations to add to the caldav Deployment
+  dpAnnotations: {}
+
+  ## @param caldav.service.type caldav Service type
+  ## @param caldav.service.port caldav Service listening port
+  ## @param caldav.service.targetPort caldav container listening port
+  ## @param caldav.service.annotations Annotations to add to the caldav Service
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+    annotations: {}
+
+  ## @param caldav.probes.liveness.path Configure path for caldav HTTP liveness probe
+  ## @param caldav.probes.liveness.initialDelaySeconds Configure initial delay for caldav liveness probe
+  ## @param caldav.probes.readiness.path Configure path for caldav HTTP readiness probe
+  ## @param caldav.probes.readiness.initialDelaySeconds Configure initial delay for caldav readiness probe
+  ## @extra caldav.probes.startup.path Configure path for caldav HTTP startup probe
+  ## @extra caldav.probes.startup.targetPort Configure port for caldav HTTP startup probe
+  ## @extra caldav.probes.startup.initialDelaySeconds Configure initial delay for caldav startup probe
+  ## @extra caldav.probes.startup.timeoutSeconds Configure timeout for caldav startup probe
+  probes:
+    liveness:
+      path: /caldav/healthz
+      initialDelaySeconds: 10
+    readiness:
+      path: /caldav/healthz
+      initialDelaySeconds: 10
+
+  ## @param caldav.resources Resource requirements for the caldav container
+  resources: {}
+
+  ## @param caldav.nodeSelector Node selector for the caldav Pod
+  nodeSelector: {}
+
+  ## @param caldav.tolerations Tolerations for the caldav Pod
+  tolerations: []
+
+  ## @param caldav.affinity Affinity for the caldav Pod
+  affinity: {}
+
+  ## @param caldav.extraVolumeMounts Additional volumes to mount on the caldav.
+  extraVolumeMounts: []
+
+  ## @param caldav.extraVolumes Additional volumes to mount on the caldav.
+  extraVolumes: []
+
+  ## @param caldav.pdb.enabled Enable pdb on caldav
+  pdb:
+    enabled: true
+
+  ## @param caldav.serviceAccountName Optional service account name to use for caldav pods
+  serviceAccountName: null
