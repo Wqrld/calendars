@@ -10,6 +10,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- 👷(ci) publish a backend image that does not run as root
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

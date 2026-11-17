@@ -31,6 +31,15 @@ name: Build and Push Container Image
         required: false
         default: ""
         description: "Additional buildx named build contexts (newline-separated name=path), e.g. to pull a file from outside the build context. Empty = none."
+      docker_user:
+        type: string
+        required: false
+        default: ""
+        description: >-
+          uid:gid the image runs as, passed to the DOCKER_USER build arg. The Dockerfiles
+          end `ARG DOCKER_USER` / `USER ${DOCKER_USER}`, so leaving this empty publishes an
+          image that runs as ROOT — which any orchestrator setting `runAsNonRoot` will then
+          refuse to start. Empty for images that must keep root (caldav binds :80).
 
 jobs:
   docker-build-push:
@@ -88,6 +97,8 @@ jobs:
           provenance: false
           tags: ${{ steps.platform-tags.outputs.amd64 }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ${{ inputs.docker_user && format('DOCKER_USER={0}', inputs.docker_user) || '' }}
       - name: Build and push (arm64)
         uses: docker/build-push-action@v6
         with:
@@ -100,6 +111,7 @@ jobs:
           tags: ${{ steps.platform-tags.outputs.arm64 }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            ${{ inputs.docker_user && format('DOCKER_USER={0}', inputs.docker_user) || '' }}
             ${{ inputs.arm64_reuse_amd64_build_arg && format('{0}={1}', inputs.arm64_reuse_amd64_build_arg, steps.platform-tags.outputs.amd64_first) || '' }}
       - name: Create multi-arch manifests
         id: create-manifest

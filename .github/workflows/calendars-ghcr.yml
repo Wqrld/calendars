@@ -25,6 +25,9 @@ jobs:
       # build context) as a named build context so the production stage can
       # COPY --from=i18n. Keeps prod calendar emails working.
       build_contexts: "i18n=src/frontend/src/features/i18n"
+      # Without this the image runs as root, which a runAsNonRoot pod refuses
+      # to start. 1001:127 is what the sibling La Suite projects publish.
+      docker_user: "1001:127"
 
   docker-publish-frontend:
     uses: ./.github/workflows/docker-publish.yml
