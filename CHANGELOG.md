@@ -10,6 +10,10 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- ✨(helm) add a Helm chart to deploy Calendars on Kubernetes
+
 ### Fixed
 
 - 👷(ci) publish a backend image that does not run as root

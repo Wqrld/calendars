@@ -1,0 +1,20 @@
+{{- $fullName := include "calendars.caldav.fullname" . -}}
+{{- $component := "caldav" -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "calendars.common.labels" (list . $component) | nindent 4 }}
+  annotations:
+    {{- toYaml $.Values.caldav.service.annotations | nindent 4 }}
+spec:
+  type: {{ .Values.caldav.service.type }}
+  ports:
+    - port: {{ .Values.caldav.service.port }}
+      targetPort: {{ .Values.caldav.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "calendars.common.selectorLabels" (list . $component) | nindent 4 }}
